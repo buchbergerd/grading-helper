@@ -172,19 +172,18 @@ def count_registrations(db: Session, exam: Exam) -> int:
 
 
 def count_affected_registrations(db: Session, exam: Exam) -> int:
-    """Registrations whose computed grade an exercise/schema edit would move (§8.1).
+    """Registrations that carry data an exercise/schema edit could move the grade of (§8.1).
 
     A registration counts as affected once it carries data a grade is derived from: at least one
     recorded ``ExercisePoints`` row, or a recorded ``attended`` flag. Excluded students are left
     out — they appear in no grade, list or report (§5.3).
 
-    In milestone 1 nothing writes either field (points entry is §15.3), so this is always ``0``
-    today. It exists now because ``PATCH /api/exams/{id}`` is where §8.1 hooks in.
-
-    # §8.1: M3 must, beyond counting, actually **recompute** ``final_total``/``grade`` for every
-    # registration this returns and persist the result — the count alone only feeds the
-    # instructor-facing warning ("Notenschema geändert — N Noten wurden neu berechnet"), which
-    # §8.1 requires to be visible rather than silent.
+    This is a coarser number than :func:`~app.api.points.grade_snapshot`'s
+    ``grades_changed`` (see ``update_exam``, below): it counts everyone an edit *could* touch,
+    not everyone whose grade *string* actually differs afterwards. ``final_total``/``grade`` are
+    never stored columns — every response computes them fresh from ``ExercisePoints`` and the
+    exam's current exercises/schema (app/models/registration.py), so "recomputing" a grade is
+    just reading it again after the edit; there is nothing here to persist.
     """
     return int(
         db.execute(
@@ -440,8 +439,23 @@ def update_exam(
 
     When such a replace happens while the exam already has registrations, the response carries a
     ``recomputation_warning`` — §8.1 forbids grade thresholds shifting silently under data an
-    instructor may already have transcribed onto paper exams. See
-    :func:`count_affected_registrations` for what M3 still has to add here.
+    instructor may already have transcribed onto paper exams. ``grades_changed`` on that warning
+    is a snapshot-diff: every non-excluded registration's computed grade string is taken *before*
+    the mutation and again *after* it (via ``app.api.points.grade_snapshot``, function-local
+    import — see the comment below on why), and the two are compared per registration. This is
+    deliberately stricter than ``affected_registrations`` (:func:`count_affected_registrations`):
+    a schema edit that leaves every 0.5-point threshold exactly where it was must report ``0``
+    changed grades even though registrations carry data, so the warning does not fire on every
+    edit regardless of effect.
+
+    One sharp edge, not exercised by any test because the contract never asks for it:
+    ``bonus_mode`` is applied above, before the "before" snapshot is taken. A request that changes
+    ``bonus_mode`` *and* ``grading_schema``/``exercises`` in the same ``PATCH`` therefore snapshots
+    "before" under the *new* bonus_mode already, so ``grades_changed`` only reflects the
+    threshold/exercise move, not the bonus_mode change layered on top of it. This matches the
+    contract, which scopes the warning to an ``exercises``/``grading_schema`` replace — a
+    bonus_mode-only edit never triggers it at all — but is worth knowing if this ever needs
+    tightening.
     """
     exam = get_owned_exam(db, user, exam_id)
     sent = payload.model_fields_set
@@ -478,16 +492,45 @@ def update_exam(
     if payload.bonus_mode is not None:
         exam.bonus_mode = payload.bonus_mode
 
+    thresholds_moved = exercises is not None or percentages is not None
+    has_registrations = count_registrations(db, exam) > 0
+
+    # §8.1: snapshot every non-excluded registration's *computed* grade string before the
+    # mutation, so the warning below can report how many actually changed rather than merely how
+    # many carry data (that is what affected_registrations, below, already answers). Function-
+    # local import: app/api/points.py imports get_owned_exam/total_max_points from this module at
+    # module scope, so importing it back here at module scope would cycle.
+    before_grades: dict[int, str | None] = {}
+    if thresholds_moved and has_registrations:
+        from app.api.points import grade_snapshot
+
+        before_grades = grade_snapshot(exam)
+
     if exercises is not None:
         _replace_exercises(db, exam, exercises)
     if percentages is not None:
         _replace_grading_schema(db, exam, percentages)
 
-    thresholds_moved = exercises is not None or percentages is not None
     warning: RecomputationWarning | None = None
-    if thresholds_moved and count_registrations(db, exam) > 0:
+    if thresholds_moved and has_registrations:
+        from app.api.points import grade_snapshot
+
+        # A full exercise replace deletes the old Exercise rows; SQLite's ON DELETE CASCADE
+        # (app/db.py) removes their ExercisePoints at the database level, invisibly to the ORM
+        # session (Exercise carries no ORM-level cascade to ExercisePoints — see
+        # app/models/registration.py). Expire everything so the "after" snapshot below re-reads
+        # from the database rather than a stale in-session ExercisePoints collection.
+        db.expire_all()
+        after_grades = grade_snapshot(exam)
+        grades_changed = sum(
+            1
+            for registration_id, before_grade in before_grades.items()
+            if after_grades.get(registration_id) != before_grade
+        )
         warning = RecomputationWarning(
-            changed=True, affected_registrations=count_affected_registrations(db, exam)
+            changed=True,
+            affected_registrations=count_affected_registrations(db, exam),
+            grades_changed=grades_changed,
         )
 
     db.commit()

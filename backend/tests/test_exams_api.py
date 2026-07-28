@@ -859,8 +859,10 @@ def test_schema_change_with_registrations_warns(
 ) -> None:
     """§8.1: thresholds must never shift silently under data an instructor already has on paper.
 
-    ``affected_registrations`` is 0 in M1 because nothing writes points or attendance yet — the
-    plumbing is what this test pins.
+    ``affected_registrations`` is 0 here because the added registration carries neither
+    attendance nor points (see ``add_registration``); ``grades_changed`` is 0 because, with
+    attendance unrecorded, the computed grade is ``None`` before and after regardless of the
+    schema — the full points-entry recomputation test lives in ``tests/test_points_api.py``.
     """
     exam = post_exam(
         instructor_client,
@@ -874,7 +876,11 @@ def test_schema_change_with_registrations_warns(
     ).json()
 
     assert body["registration_count"] == 1
-    assert body["recomputation_warning"] == {"changed": True, "affected_registrations": 0}
+    assert body["recomputation_warning"] == {
+        "changed": True,
+        "affected_registrations": 0,
+        "grades_changed": 0,
+    }
 
 
 def test_scalar_only_patch_does_not_warn(
@@ -906,7 +912,11 @@ def test_affected_registrations_counts_students_with_recorded_data(
         f"/api/exams/{exam['id']}", json={"grading_schema": VALID_SCHEMA}
     ).json()
 
-    assert body["recomputation_warning"] == {"changed": True, "affected_registrations": 1}
+    assert body["recomputation_warning"] == {
+        "changed": True,
+        "affected_registrations": 1,
+        "grades_changed": 1,
+    }
 
 
 # --------------------------------------------------------------------------------------------

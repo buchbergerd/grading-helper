@@ -561,6 +561,151 @@ export interface DownloadedFile {
   filename: string;
 }
 
+/* ------------------------------------------------------------------ points entry (§8) */
+
+/**
+ * One exercise as carried by the points-grid endpoints — the same shape as `Exercise` but with
+ * `id` guaranteed present (a points grid only ever exists for exercises already saved on the
+ * exam).
+ */
+export interface PointsExercise {
+  id: number;
+  name: string;
+  /** DECIMAL — string, see the file header. */
+  max_points: string;
+  position: number;
+}
+
+/**
+ * One grading-schema row as carried by the points-grid endpoints. Unlike `GradingSchemaRow`
+ * (the exam editor's shape), this one includes the server-computed `threshold_points` (§7.2) —
+ * the points grid needs it to preview a grade, and the backend is the only authoritative source
+ * for it.
+ */
+export interface PointsSchemaRow {
+  grade: string;
+  percentage: string;
+  /** DECIMAL — string. Response-only; never sent back. */
+  threshold_points: string;
+}
+
+/**
+ * One student row of the points grid (§8). `points` carries only the exercises that have a
+ * value entered — **a missing key means "not entered", never 0** (§8.1); this object is never
+ * defaulted or filled in with zeros on the client.
+ */
+export interface PointsEntry {
+  /** Registration id. */
+  id: number;
+  matrikelnummer: string;
+  nachname: string;
+  vorname: string;
+  course_code: string;
+  versuch: number;
+  /** `null` = not yet recorded, distinct from `false` ("nicht erschienen") — §7.4/§8.1. */
+  attended: boolean | null;
+  /** DECIMAL — string. */
+  bonus_points: string;
+  /** Keyed by exercise id (as a string, since it crosses the wire as a JSON object key). */
+  points: Record<string, string>;
+  /** DECIMAL — string. Sum of entered exercise points. */
+  raw_total: string;
+  /** DECIMAL — string, or `null` when not attended. */
+  final_total: string | null;
+  grade: string | null;
+  /** The grading engine's English `GradeStatus` token — for UI branching only, never shown to a
+   * user (display `grade` instead). `null` whenever the parent response's `grading_configured`
+   * is `false`. */
+  status: string | null;
+  is_complete: boolean;
+}
+
+/** `GET /exams/{id}/points` response — matches `PointsGridOut` in `app/api/schemas.py` exactly
+ * (there is no `total_max_points` field here; nothing in this client needs it). */
+export interface PointsGrid {
+  exercises: PointsExercise[];
+  grading_schema: PointsSchemaRow[];
+  bonus_mode: BonusMode;
+  /** False when the exam has no (complete) grading schema yet — a grade preview is then not
+   * meaningful and must not be shown as if it were. */
+  grading_configured: boolean;
+  entries: PointsEntry[];
+}
+
+/**
+ * The server also accepts an optional `course_code` query filter, deliberately unused here: this
+ * client always fetches the whole grid and filters client-side (same convention as
+ * `listRegistrations`/RegistrationsPage), so the course dropdown always lists every course and
+ * switching it never needs a round trip.
+ */
+export function getPointsGrid(examId: number): Promise<PointsGrid> {
+  return request<PointsGrid>(`/exams/${examId}/points`);
+}
+
+/**
+ * One row of the bulk-save request body — matches `BulkPointsEntry` in `app/api/schemas.py`.
+ * `points[exerciseId]` is the DECIMAL string to store, or `null` to mean "not entered" — **never
+ * `"0"` for an empty cell** (§8.1's central distinction); a key can also be omitted for the same
+ * "not entered" effect (the PUT is a full replace, not a merge), but this client always sends
+ * every exercise id it knows about explicitly. `bonus_points: null` (as opposed to an empty
+ * string, which the decimal-string contract rejects outright) is how an emptied bonus field
+ * requests the server's own default of `0`.
+ */
+export interface PointsRowWrite {
+  registration_id: number;
+  attended: boolean | null;
+  bonus_points: string | null;
+  points: Record<string, string | null>;
+}
+
+/**
+ * `PUT /exams/{id}/points` — bulk save, one all-or-nothing transaction. Always send every row
+ * currently in the grid, not just the ones touched this session: this is a bulk *replace* of the
+ * submitted rows, and dropping an untouched row would only be safe if the server treated a
+ * missing row as "leave unchanged", which is not the documented contract.
+ *
+ * The response (`BulkPointsSaveResult`) is `{entries: [...recomputed rows...], warnings:
+ * [...]}` — note `warnings` is a single flat list for the whole batch, not attached per row; a
+ * warning's own text already names the affected student (matrikelnummer) and exercise.
+ */
+export function savePointsGrid(
+  examId: number,
+  rows: PointsRowWrite[],
+): Promise<{ entries: PointsEntry[]; warnings: string[] }> {
+  return request<{ entries: PointsEntry[]; warnings: string[] }>(`/exams/${examId}/points`, {
+    method: "PUT",
+    body: { entries: rows },
+  });
+}
+
+/** One non-excluded registration the §8.1 completeness gate is blocking on — matches
+ * `IncompleteStudentOut`. `missing_exercises` is already a list of exercise **names** (the
+ * backend resolves ids to names), not ids — nothing on the client needs to look them up. */
+export interface IncompleteStudent {
+  id: number;
+  matrikelnummer: string;
+  nachname: string;
+  vorname: string;
+  attendance_missing: boolean;
+  missing_exercises: string[];
+}
+
+export interface CompletenessResult {
+  is_complete: boolean;
+  incomplete_count: number;
+  incomplete_students: IncompleteStudent[];
+}
+
+/**
+ * `GET /exams/{id}/completeness` — the §8.1 gate reports/exports check before allowing an
+ * Examination-office or Student-results report to be generated. Shown here so the instructor
+ * sees the specific list before attempting an export, without needing to hit the export route
+ * first just to be told what is missing.
+ */
+export function getCompleteness(examId: number): Promise<CompletenessResult> {
+  return request<CompletenessResult>(`/exams/${examId}/completeness`);
+}
+
 /**
  * `GET /exams/{id}/reports/attendance-list` — a PDF (§6), not JSON, so this bypasses `request()`
  * entirely and reads the body as a `Blob`. The filename comes from the response's

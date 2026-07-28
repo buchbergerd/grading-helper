@@ -227,7 +227,19 @@ class RecomputationWarning(BaseModel):
     """§8.1: an exercise/schema edit shifted the grade boundaries under existing student data."""
 
     changed: bool
+    #: Registrations that carry *any* data a grade is derived from (attendance or at least one
+    #: entered exercise point) — see ``app/api/exams.py::count_affected_registrations``.
     affected_registrations: int
+    #: How many of those registrations' **computed grade strings actually differ** before vs.
+    #: after this edit (§8.1) — a snapshot taken immediately before the mutation, re-derived
+    #: immediately after, compared per registration. A registration whose grade was previously
+    #: not computable (e.g. the schema had never been configured) and now is counts as changed:
+    #: ``None`` and a real grade string are different outcomes for the instructor. Deliberately
+    #: separate from ``affected_registrations``: a threshold edit that leaves every grade exactly
+    #: where it was (e.g. a percentage change that still floors to the same 0.5-point threshold,
+    #: §7.2) must report ``0`` here so the warning is not "always on" — an always-firing warning
+    #: teaches instructors to ignore it.
+    grades_changed: int
 
 
 class ExamSummary(BaseModel):
@@ -437,3 +449,120 @@ class RegistrationHeadCount(BaseModel):
 
     total: int
     per_course: list[CourseHeadCount]
+
+
+# --------------------------------------------------------------------------------------------
+# Points / attendance entry (§8, §8.1 — ``app/api/points.py``, ``docs/api-contract.md``)
+# --------------------------------------------------------------------------------------------
+
+
+class PointsEntryOut(BaseModel):
+    """One non-excluded registration's row in the §8 points-entry grid.
+
+    ``points`` is keyed by the exercise id **as a string** (JSON object keys are always strings)
+    and only carries exercises that actually have an ``ExercisePoints`` row — an absent key means
+    "not entered", never an implicit zero (§8.1). ``status`` is the grading engine's English
+    :class:`~app.grading.engine.GradeStatus` token; it drives UI branching (e.g. graying out a
+    row) and must never be shown to a user verbatim — display ``grade`` instead. Both ``grade``
+    and ``status`` are ``null`` when the exam's grading schema is absent/incomplete, even if
+    ``attended`` and every exercise's points are recorded (``grading_configured`` on the parent
+    response says why).
+    """
+
+    id: int
+    matrikelnummer: str
+    nachname: str
+    vorname: str
+    course_code: str
+    versuch: int
+    attended: bool | None
+    bonus_points: DecimalString
+    points: dict[str, DecimalString]
+    raw_total: DecimalString
+    final_total: DecimalString | None
+    grade: str | None
+    status: str | None
+    is_complete: bool
+
+
+class PointsGridOut(BaseModel):
+    """``GET /api/exams/{exam_id}/points`` — everything the entry grid needs in one call."""
+
+    exercises: list[ExerciseOut]
+    grading_schema: list[GradeThresholdOut]
+    bonus_mode: BonusMode
+    #: ``False`` when the grading schema is absent or incomplete (fewer than the ten §7.1
+    #: grades). Every entry's ``grade``/``status`` are then ``null`` rather than the route
+    #: raising — ``compute_grade`` requires a complete schema and would otherwise ``500``.
+    grading_configured: bool
+    entries: list[PointsEntryOut]
+
+
+class PointsSaveRequest(BaseModel):
+    """``PUT /api/registrations/{id}/points`` body — a **full replace** of the row's entry state.
+
+    Every field is independently defaulted rather than "unchanged if omitted" (unlike the
+    ``PATCH`` requests elsewhere in this module): an absent/``null`` ``points`` entry **deletes**
+    that exercise's ``ExercisePoints`` row, an absent ``attended`` sets it to ``null`` ("not yet
+    recorded"), and an absent ``bonus_points`` sets it to ``Decimal(0)``. See the route docstring
+    for the full semantics, in particular that ``attended = false`` does **not** clear ``points``.
+    """
+
+    attended: bool | None = None
+    bonus_points: DecimalString | None = None
+    #: Keyed by exercise id as a string. A key with a ``null`` value, or a key absent entirely,
+    #: both delete that exercise's row — there is no distinct "leave unchanged" state in a PUT.
+    points: dict[str, DecimalString | None] = Field(default_factory=dict)
+
+
+class PointsSaveResult(BaseModel):
+    """``PUT /api/registrations/{id}/points`` response."""
+
+    registration: PointsEntryOut
+    #: German warnings that do not block the save (§8: "warn, don't silently clamp" — points
+    #: exceeding an exercise's ``max_points``).
+    warnings: list[str]
+
+
+class BulkPointsEntry(PointsSaveRequest):
+    """One row of a bulk save — same full-replace semantics as :class:`PointsSaveRequest`."""
+
+    registration_id: int
+
+
+class BulkPointsSaveRequest(BaseModel):
+    """``PUT /api/exams/{exam_id}/points`` body — one transaction, all rows or none (§8)."""
+
+    entries: list[BulkPointsEntry]
+
+
+class BulkPointsSaveResult(BaseModel):
+    """``PUT /api/exams/{exam_id}/points`` response, entries in request order."""
+
+    entries: list[PointsEntryOut]
+    warnings: list[str]
+
+
+class IncompleteStudentOut(BaseModel):
+    """One non-excluded registration the §8.1 completeness gate is blocking on."""
+
+    id: int
+    matrikelnummer: str
+    nachname: str
+    vorname: str
+    attendance_missing: bool
+    #: Names (not ids) of exercises with no recorded points, only when attendance is recorded
+    #: and true — an unattended student needs no points at all (§7.4, §8).
+    missing_exercises: list[str]
+
+
+class CompletenessOut(BaseModel):
+    """``GET /api/exams/{exam_id}/completeness`` — the §8.1 export gate.
+
+    Reusable beyond this route: the §10/§11 report endpoints call the same
+    ``app.api.points.exam_completeness`` helper that builds this shape.
+    """
+
+    is_complete: bool
+    incomplete_count: int
+    incomplete_students: list[IncompleteStudentOut]

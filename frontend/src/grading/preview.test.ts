@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   GRADE_SCALE,
   compareDecimalStrings,
+  computeGradePreview,
   exercisePointsFieldError,
   fromScaled,
   gradeFromServerMessage,
@@ -12,6 +13,7 @@ import {
   toScaled,
   validateExercises,
   validateGradingSchema,
+  type GradeThresholdRow,
 } from "./preview";
 
 /** Builds a full ten-grade schema from a list of percentages, in §7.1 order. */
@@ -278,5 +280,144 @@ describe("gradeFromServerMessage (Fix 2: highlighting a 422's own field)", () =>
 
   it("returns null for a message naming no grade, so the caller falls back to the summary", () => {
     expect(gradeFromServerMessage("Der Server ist nicht erreichbar.")).toBeNull();
+  });
+});
+
+describe("computeGradePreview (§7.3/§7.4, §7.5 worked example)", () => {
+  // §7.5: max_points = 60, 1.0 at 95 % -> 57.0, 4.0 (pass) at 50 % -> 30.0.
+  const SCHEMA_60: GradeThresholdRow[] = [
+    { grade: "1.0", threshold_points: "57.00" },
+    { grade: "4.0", threshold_points: "30.00" },
+  ];
+
+  it("30.0 exactly meets the 4.0 threshold -> grade 4.0", () => {
+    const result = computeGradePreview({
+      enteredExercisePoints: ["30.00"],
+      bonusPoints: "0.00",
+      bonusMode: "ALWAYS",
+      attended: true,
+      gradingSchema: SCHEMA_60,
+      gradingConfigured: true,
+    });
+    expect(result.rawTotal).toBe("30.00");
+    expect(result.finalTotal).toBe("30.00");
+    expect(result.gradeLabel).toBe("4,0");
+  });
+
+  it("29.5 is below 30.0 -> nicht bestanden", () => {
+    const result = computeGradePreview({
+      enteredExercisePoints: ["29.50"],
+      bonusPoints: "0.00",
+      bonusMode: "ALWAYS",
+      attended: true,
+      gradingSchema: SCHEMA_60,
+      gradingConfigured: true,
+    });
+    expect(result.gradeLabel).toBe("nicht bestanden");
+  });
+
+  it("attended=false overrides everything else -> n.e., final_total null", () => {
+    const result = computeGradePreview({
+      enteredExercisePoints: ["29.50"],
+      bonusPoints: "0.00",
+      bonusMode: "ALWAYS",
+      attended: false,
+      gradingSchema: SCHEMA_60,
+      gradingConfigured: true,
+    });
+    expect(result.gradeLabel).toBe("n.e.");
+    expect(result.finalTotal).toBeNull();
+    // raw_total is still shown even though the grade doesn't use it.
+    expect(result.rawTotal).toBe("29.50");
+  });
+
+  it("ALWAYS applies bonus unconditionally: 28.0 + 3 clears 30.0 -> grade 4.0", () => {
+    const result = computeGradePreview({
+      enteredExercisePoints: ["28.00"],
+      bonusPoints: "3",
+      bonusMode: "ALWAYS",
+      attended: true,
+      gradingSchema: SCHEMA_60,
+      gradingConfigured: true,
+    });
+    expect(result.finalTotal).toBe("31.00");
+    expect(result.gradeLabel).toBe("4,0");
+  });
+
+  it("ONLY_IF_PASSING_WITHOUT_BONUS withholds bonus when raw_total alone fails", () => {
+    const result = computeGradePreview({
+      enteredExercisePoints: ["28.00"],
+      bonusPoints: "3",
+      bonusMode: "ONLY_IF_PASSING_WITHOUT_BONUS",
+      attended: true,
+      gradingSchema: SCHEMA_60,
+      gradingConfigured: true,
+    });
+    // Bonus is NOT applied: final_total stays at raw_total, and the grade stays a fail.
+    expect(result.finalTotal).toBe("28.00");
+    expect(result.gradeLabel).toBe("nicht bestanden");
+  });
+
+  it("ONLY_IF_PASSING_WITHOUT_BONUS still applies (and can improve) the grade once raw_total passes", () => {
+    const fullSchema: GradeThresholdRow[] = [
+      { grade: "1.0", threshold_points: "57.00" },
+      { grade: "1.3", threshold_points: "54.00" },
+      { grade: "1.7", threshold_points: "51.00" },
+      { grade: "2.0", threshold_points: "48.00" },
+      { grade: "2.3", threshold_points: "45.00" },
+      { grade: "2.7", threshold_points: "42.00" },
+      { grade: "3.0", threshold_points: "39.00" },
+      { grade: "3.3", threshold_points: "36.00" },
+      { grade: "3.7", threshold_points: "32.00" },
+      { grade: "4.0", threshold_points: "30.00" },
+    ];
+    const result = computeGradePreview({
+      enteredExercisePoints: ["32.00"],
+      bonusPoints: "3",
+      bonusMode: "ONLY_IF_PASSING_WITHOUT_BONUS",
+      attended: true,
+      gradingSchema: fullSchema,
+      gradingConfigured: true,
+    });
+    expect(result.finalTotal).toBe("35.00"); // 32.0 raw_total already passes -> bonus applies
+    expect(result.gradeLabel).toBe("3,7");
+  });
+
+  it("attended=null (not yet recorded) previews no grade, distinct from n.e. or nicht bestanden", () => {
+    const result = computeGradePreview({
+      enteredExercisePoints: ["45.00"],
+      bonusPoints: "0.00",
+      bonusMode: "ALWAYS",
+      attended: null,
+      gradingSchema: SCHEMA_60,
+      gradingConfigured: true,
+    });
+    expect(result.gradeLabel).toBe("—");
+    expect(result.gradeLabel).not.toBe("n.e.");
+    expect(result.gradeLabel).not.toBe("nicht bestanden");
+  });
+
+  it("an unconfigured grading schema never produces a confident-looking grade", () => {
+    const result = computeGradePreview({
+      enteredExercisePoints: ["45.00"],
+      bonusPoints: "0.00",
+      bonusMode: "ALWAYS",
+      attended: true,
+      gradingSchema: [],
+      gradingConfigured: false,
+    });
+    expect(result.gradeLabel).toBe("—");
+  });
+
+  it("is exact where binary floats are not: 0.1 + 0.2 style bonus addition", () => {
+    const result = computeGradePreview({
+      enteredExercisePoints: ["12.50"],
+      bonusPoints: "0.25",
+      bonusMode: "ALWAYS",
+      attended: true,
+      gradingSchema: [],
+      gradingConfigured: false,
+    });
+    expect(result.finalTotal).toBe("12.75");
   });
 });

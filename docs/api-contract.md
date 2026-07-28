@@ -1,4 +1,4 @@
-# API contract — milestone 1 (§15.1: data model, auth, Lecture/Exam CRUD)
+# API contract (living document — extended each milestone)
 
 Written before implementation so the backend and frontend agree without one having to read the
 other's code. Section references are to `/SPECIFICATION.md`. Later milestones extend this file.
@@ -78,12 +78,21 @@ total_max_points, recomputation_warning}`.
   `threshold_points` is response-only, computed server-side from `total_max_points` per §7.2
   (the backend is authoritative; the frontend may preview but never sends it).
 - `total_max_points`: sum of the exercises' `max_points`, as a string. Response-only.
-- `recomputation_warning`: `{"changed": bool, "affected_registrations": int}` or `null`
-  (§8.1). Non-`null` only on a `PATCH` response, and only when `exercises` or `grading_schema`
-  were replaced **and** the exam already has registrations — i.e. grade thresholds just moved
-  under existing student data and the UI must say so visibly. `affected_registrations` counts
-  registrations that already carry attendance or points; in M1 nothing writes either, so it is
-  always `0` until §15.3 lands.
+- `recomputation_warning`: `{"changed": bool, "affected_registrations": int, "grades_changed":
+  int}` or `null` (§8.1). Non-`null` only on a `PATCH` response, and only when `exercises` or
+  `grading_schema` were replaced **and** the exam already has registrations — i.e. grade
+  thresholds just moved under existing student data and the UI must say so visibly.
+  `affected_registrations` counts registrations that already carry attendance or points (a
+  coarse "could this edit matter" count). `grades_changed` is the precise one: the number of
+  non-excluded registrations whose **computed grade string** differs before vs. after the edit —
+  taken as a snapshot immediately before the mutation and re-derived immediately after. A
+  registration whose grade was not previously computable (schema never configured, or attendance
+  not yet recorded) and now is counts as changed. Deliberately stricter than
+  `affected_registrations`: a percentage edit that still floors to the same 0.5-point threshold
+  (§7.2) reports `grades_changed: 0` even though registrations carry data — an always-firing
+  warning teaches instructors to ignore it. Nothing here is a stored column (no `Exam`/
+  `StudentRegistration` field holds a grade); "recomputing" means re-deriving it from
+  `ExercisePoints` and the exam's current exercises/schema, same as every other read.
 - `lecture_name` is a convenience copy of the parent lecture's name; it is never derived from a
   registration PDF (§4).
 
@@ -163,10 +172,67 @@ surname with **German DIN 5007-1 collation** (§6) computed in Python — never 
 students are omitted. An exam with no registrations still renders a valid PDF with a head count
 of 0 rather than erroring.
 
+## Points / attendance entry (§8, §8.1) — milestone 3
+
+All routes owner-scoped through the exam (`/api/exams/{id}/...`) or through the registration's
+exam (`/api/registrations/{id}/points`); another instructor gets `404`, not `403`, exactly as
+elsewhere. `app/api/points.py` owns all four routes.
+
+Neither `final_total` nor `grade` is ever a stored column — every response computes them fresh
+from `ExercisePoints`, `bonus_points`, `attended` and the exam's current exercises/grading schema
+(`app/grading/engine.py::compute_grade`). There is nothing to keep in sync; there is only ever
+"read it now".
+
+`PointsEntryOut` (one registration's row, used by the grid and by both save routes):
+`{id, matrikelnummer, nachname, vorname, course_code, versuch, attended, bonus_points, points:
+{<exercise_id as string>: "value"}, raw_total, final_total, grade, status, is_complete}`.
+`points` only carries exercises that actually have an `ExercisePoints` row — a missing key means
+"not entered", never an implicit zero (§8.1). `status` is the grading engine's English
+`GradeStatus` token (`GRADED` / `FAILED` / `NOT_ATTENDED` / `ATTENDANCE_NOT_RECORDED`) — for UI
+branching only, never shown to a user; display `grade` instead. `grade` and `status` are `null`
+whenever the parent response's `grading_configured` is `false` (schema absent or incomplete),
+regardless of what is otherwise entered. `raw_total` is **always** present (the sum of whatever
+is entered is a plain fact, independent of attendance or the schema); `final_total` is `null`
+exactly when `status` is `NOT_ATTENDED` or `ATTENDANCE_NOT_RECORDED` — the two are not jointly
+nullable, and a client must not hide `raw_total` just because `final_total`/`grade` are absent.
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | `/api/exams/{id}/points` | — | `{exercises: [...], grading_schema: [...], bonus_mode, grading_configured, entries: [PointsEntryOut]}`. Optional `course_code` filter. One entry per **non-excluded** registration (§5.3), sorted by Matrikelnummer |
+| PUT | `/api/registrations/{id}/points` | `{attended?, bonus_points?, points?}` | `200` + `{registration: PointsEntryOut, warnings: [German strings]}` |
+| PUT | `/api/exams/{id}/points` | `{entries: [{registration_id, attended?, bonus_points?, points?}, ...]}` | `200` + `{entries: [PointsEntryOut], warnings: [...]}`. One transaction, all rows or none |
+| GET | `/api/exams/{id}/completeness` | — | `{is_complete, incomplete_count, incomplete_students: [{id, matrikelnummer, nachname, vorname, attendance_missing, missing_exercises: [names]}]}` (§8.1) |
+
+**Both `PUT` routes are a full replace of each row's entry state, never a merge** — this is the
+one place in the API where "field absent" does *not* mean "leave unchanged":
+
+- a `points` map key that is absent from the payload, or present with JSON `null`, **deletes**
+  that exercise's `ExercisePoints` row (never coerced to a stored zero — §8.1 requires "not
+  entered" and "entered zero" to stay distinguishable);
+- an absent `attended` sets it to `null` ("not yet recorded");
+- an absent `bonus_points` sets it to `"0"`.
+
+Points entered above an exercise's `max_points` are **saved anyway** and reported back in
+`warnings` — never rejected, never silently clamped (§8: "typos happen"). Negative points or
+negative `bonus_points`, and any write to an **excluded** registration, are rejected with `422`.
+Marking `attended = false` does **not** clear previously entered `points` — resending the same
+`points` map while flipping `attended` keeps that data in the database (flipping back to `true`
+later does not require re-transcribing the exam), while §7.4 means those points play no role in
+the grade (`"n.e."`) for as long as `attended` stays `false`.
+
+The bulk `PUT /api/exams/{id}/points` validates every row — including that its
+`registration_id` actually belongs to this exam, is not excluded, and appears at most once in
+the request — before writing anything; a single invalid row rejects the whole batch with `422`
+and leaves the database exactly as it was.
+
+`GET /api/exams/{id}/completeness` is §8.1's gate for the (not-yet-built) §10/§11 report routes:
+every non-excluded registration must have `attended` recorded, and every `attended = true`
+registration must have every exercise's points entered. `app/api/points.py::exam_completeness`
+is the shared helper the future report routes call directly rather than re-deriving the same
+list. Excluded students are never counted.
+
 ## Deferred to later milestones
 
-Points entry (§8), reports (§9–§11). Editing
-`max_points` or the grading schema after points exist must trigger a visible recomputation
-(§8.1) — there are no points yet in M1, but the PATCH handler is where that hooks in: it already
-returns `recomputation_warning` and calls `app/api/exams.py::count_affected_registrations`, which
-M3 must extend from counting to actually recomputing `final_total`/`grade`.
+Reports (§9–§11) — the shared statistics module, the internal PDF/dashboard, and the
+examination-office/student-results PDF+Excel exports, all gated on
+`app/api/points.py::exam_completeness` passing for every non-excluded registration.

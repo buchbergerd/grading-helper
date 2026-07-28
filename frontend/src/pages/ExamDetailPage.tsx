@@ -359,8 +359,9 @@ export default function ExamDetailPage(): JSX.Element {
           : `${exam.registration_count} angemeldete Studierende`}
       </p>
 
-      <p>
+      <p className="button-row">
         <Link to={`/klausuren/${exam.id}/anmeldungen`}>Anmeldungen verwalten</Link>
+        <Link to={`/klausuren/${exam.id}/punkte`}>Punkte &amp; Anwesenheit erfassen</Link>
       </p>
 
       <ErrorList messages={messages} title={messages.length > 1 ? "Bitte prüfen:" : undefined} />

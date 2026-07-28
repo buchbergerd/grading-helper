@@ -8,6 +8,7 @@ import LectureDetailPage from "./pages/LectureDetailPage";
 import LectureListPage from "./pages/LectureListPage";
 import LoginPage from "./pages/LoginPage";
 import NotFoundPage from "./pages/NotFoundPage";
+import PointsEntryPage from "./pages/PointsEntryPage";
 import RegistrationsPage from "./pages/RegistrationsPage";
 
 function Layout(): JSX.Element {
@@ -61,6 +62,7 @@ export default function App(): JSX.Element {
         <Route path="/vorlesungen/:lectureId" element={<LectureDetailPage />} />
         <Route path="/klausuren/:examId" element={<ExamDetailPage />} />
         <Route path="/klausuren/:examId/anmeldungen" element={<RegistrationsPage />} />
+        <Route path="/klausuren/:examId/punkte" element={<PointsEntryPage />} />
         <Route path="/passwort" element={<ChangePasswordPage />} />
         <Route
           path="/admin/benutzer"

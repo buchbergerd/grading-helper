@@ -389,6 +389,167 @@ input.field-invalid {
   margin: 0.25rem 0 0.75rem;
 }
 
+/* ---------------------------------------------------------------- points entry grid (§8) */
+
+/* The scroll container: both the sticky header and the sticky left-column block (Matr.-Nr. +
+   Nachname) are positioned relative to *this* element's scrollport, not the page, so they stay
+   visible while scrolling a wide/long grid without the whole page needing to scroll. */
+.points-grid-wrapper {
+  overflow: auto;
+  max-height: 75vh;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin: 0.5rem 0 1rem;
+}
+
+/* border-collapse: collapse (the default table rule above) makes borders on position: sticky
+   cells disappear while scrolling in most browsers — separate + border-spacing: 0, with cell
+   separators drawn as inset box-shadows instead of borders, avoids that entirely. */
+.points-grid {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: max-content;
+  min-width: 100%;
+  font-size: 0.85rem;
+}
+
+.points-grid th,
+.points-grid td {
+  border-bottom: 1px solid var(--border);
+  padding: 0.3rem 0.45rem;
+  white-space: nowrap;
+  background: var(--bg);
+}
+
+.points-grid thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--bg-soft);
+  box-shadow: inset 0 -1px 0 var(--border);
+  vertical-align: bottom;
+}
+
+.points-grid .col-sticky-1,
+.points-grid .col-sticky-2 {
+  position: sticky;
+  z-index: 1;
+  background: var(--bg);
+}
+
+/* Fixed width (not min-width) on both sticky columns, so column 2's `left` offset can never
+   drift out from under column 1 just because a long Matrikelnummer or name pushed it wider —
+   overflow is truncated with an ellipsis instead. */
+.points-grid .col-sticky-1 {
+  left: 0;
+  width: 6rem;
+  max-width: 6rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-shadow: inset -1px 0 0 var(--border);
+}
+
+.points-grid .col-sticky-2 {
+  left: 6rem;
+  width: 10rem;
+  max-width: 10rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-shadow: inset -1px 0 0 var(--border);
+}
+
+/* The sticky-header × sticky-left-column intersection needs to beat both individually, or the
+   header slides underneath the body's sticky cells while scrolling down. */
+.points-grid thead .col-sticky-1,
+.points-grid thead .col-sticky-2 {
+  z-index: 3;
+  background: var(--bg-soft);
+}
+
+.points-grid tbody tr:nth-child(even) td {
+  background: var(--bg-soft);
+}
+
+.points-grid input.cell-input {
+  width: 4.5rem;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  padding: 0.15rem 0.3rem;
+}
+
+.points-grid input.bonus-input {
+  width: 4.5rem;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  padding: 0.15rem 0.3rem;
+}
+
+.points-grid td.numeric-cell {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Not attended (§8): point entry is de-emphasised rather than requiring zeros — the stored
+   values are kept, only presentation changes. */
+.points-grid tr.row-not-attended td {
+  color: var(--fg-muted);
+}
+
+.points-grid tr.row-not-attended input.cell-input {
+  background: var(--bg-soft);
+}
+
+/* Attendance not yet recorded (`null`) is a third, visibly distinct state from "not attended" —
+   a left amber stripe on the sticky columns, plus the tri-state select itself already reads
+   "Nicht erfasst". */
+.points-grid tr.row-attendance-unknown .col-sticky-1,
+.points-grid tr.row-attendance-unknown .col-sticky-2 {
+  box-shadow:
+    inset -1px 0 0 var(--border),
+    inset 3px 0 0 var(--warn);
+}
+
+/* A value above an exercise's max_points: warn, never clamp (§8) — the cell is marked, the value
+   is kept exactly as typed. */
+input.cell-warn {
+  border-color: var(--warn);
+  background: var(--warn-soft);
+}
+
+.cell-warning-text {
+  display: block;
+  font-size: 0.7rem;
+  color: var(--warn);
+  white-space: normal;
+}
+
+.points-grid-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: flex-end;
+  margin-bottom: 0.75rem;
+}
+
+.points-grid-warnings {
+  border: 1px solid var(--warn);
+  background: var(--warn-soft);
+  color: var(--warn);
+  border-radius: var(--radius);
+  padding: 0.6rem 0.8rem;
+  margin: 0.75rem 0;
+}
+
+.points-grid-warnings ul {
+  margin: 0.25rem 0 0;
+  padding-left: 1.2rem;
+}
+
+.unsaved-indicator {
+  color: var(--warn);
+  font-weight: 600;
+}
+
 /* ---------------------------------------------------------------- dialog */
 
 .dialog-backdrop {

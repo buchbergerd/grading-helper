@@ -14,7 +14,8 @@
  * strings are converted to hundredths by string surgery, never by `Number()`/`parseFloat`.
  */
 
-import { formatDecimal, isCanonicalDecimal } from "../util/format";
+import type { BonusMode } from "../api/client";
+import { EMPTY_DISPLAY, formatDecimal, isCanonicalDecimal } from "../util/format";
 
 /** Number of decimal places every value is scaled to internally. */
 const SCALE = 2;
@@ -318,4 +319,99 @@ export function gradeFromServerMessage(message: string): Grade | null {
       (grade): grade is Grade => grade !== undefined && (GRADE_SCALE as readonly string[]).includes(grade),
     );
   return grades[grades.length - 1] ?? null;
+}
+
+/* --------------------------------------------------------------- §8 points-entry preview */
+
+/** One grading-schema row as needed for a grade preview — grade plus the server-computed
+ * `threshold_points` (§7.2). Matches `PointsSchemaRow` from `api/client.ts`, kept as a separate,
+ * narrower type here so this module has no non-type dependency on the API client. */
+export interface GradeThresholdRow {
+  grade: string;
+  threshold_points: string;
+}
+
+export interface GradePreviewInput {
+  /** Canonical decimal strings of every exercise the student has an entered (non-empty, parsable)
+   * value for. An exercise with no value yet is simply absent from this list — it must never be
+   * padded with a "0.00" entry, or the live total would silently imply the exercise was graded. */
+  enteredExercisePoints: readonly string[];
+  /** The bonus-points field's current text, canonical-or-raw. An unparsable/mid-keystroke value
+   * (e.g. "3," while typing "3,5") is treated as 0 for this *preview only* — the same "don't go
+   * blank while the instructor is mid-edit" convention as ExamDetailPage's Fix 1. Never affects
+   * what is actually saved. */
+  bonusPoints: string;
+  bonusMode: BonusMode;
+  /** `null` = attendance not yet recorded, `false` = "n.e.", `true` = graded normally (§7.4). */
+  attended: boolean | null;
+  gradingSchema: readonly GradeThresholdRow[];
+  /** Mirrors `PointsGrid.grading_configured`. A schema that is absent or only partially filled
+   * must never produce a confident-looking grade — gate on this flag, not merely on
+   * `gradingSchema.length`, since a partial schema could still have some rows. */
+  gradingConfigured: boolean;
+}
+
+export interface GradePreviewResult {
+  /** DECIMAL string: sum of `enteredExercisePoints`. Always computed, even when not attended. */
+  rawTotal: string;
+  /** DECIMAL string per §7.3, or `null` when not attended (§7.4: "no points needed/used"). */
+  finalTotal: string | null;
+  /** One of: a formatted grade ("1,3"), "nicht bestanden", "n.e.", or EMPTY_DISPLAY when no
+   * preview is possible yet (schema not configured, or attendance not yet recorded). */
+  gradeLabel: string;
+}
+
+/**
+ * Client-side preview mirroring §7.3/§7.4's rules exactly, computed entirely in bigint
+ * hundredths (via `sumMaxPoints`/`toScaled`/`compareDecimalStrings`) — never a JS number. Always
+ * a *preview*: the server recomputes and its `grade`/`final_total` are authoritative and replace
+ * this the moment a save response comes back (see `PointsEntryPage`'s save handler).
+ */
+export function computeGradePreview(input: GradePreviewInput): GradePreviewResult {
+  const rawTotal = sumMaxPoints(input.enteredExercisePoints) ?? "0.00";
+
+  // §7.4: attendance overrides everything else, including a raw_total that would otherwise pass.
+  if (input.attended === false) {
+    return { rawTotal, finalTotal: null, gradeLabel: "n.e." };
+  }
+
+  // A mid-keystroke/invalid bonus value previews as 0 rather than making the row's total vanish;
+  // it is never what actually gets sent (the save payload reads the raw text separately).
+  const bonusCanonical = fromScaled(toScaled(input.bonusPoints) ?? 0n);
+
+  const sortedSchema = [...input.gradingSchema].sort(
+    (a, b) =>
+      (GRADE_SCALE as readonly string[]).indexOf(a.grade) -
+      (GRADE_SCALE as readonly string[]).indexOf(b.grade),
+  );
+  const passingRow = sortedSchema.find((row) => row.grade === "4.0");
+
+  // §7.3: ALWAYS adds bonus unconditionally; ONLY_IF_PASSING_WITHOUT_BONUS adds it only once
+  // raw_total alone already clears the 4.0 threshold (checked here, not against final_total —
+  // getting that backwards would let bonus points turn a fail into a pass).
+  let finalTotal: string;
+  if (input.bonusMode === "ALWAYS") {
+    finalTotal = sumMaxPoints([rawTotal, bonusCanonical]) ?? rawTotal;
+  } else {
+    const passesWithoutBonus =
+      passingRow !== undefined &&
+      (compareDecimalStrings(rawTotal, passingRow.threshold_points) ?? -1) >= 0;
+    finalTotal = passesWithoutBonus
+      ? (sumMaxPoints([rawTotal, bonusCanonical]) ?? rawTotal)
+      : rawTotal;
+  }
+
+  if (input.attended === null || !input.gradingConfigured || sortedSchema.length === 0) {
+    return { rawTotal, finalTotal, gradeLabel: EMPTY_DISPLAY };
+  }
+
+  // Best (numerically lowest) grade whose threshold is met, 1.0 down to 4.0; below the 4.0
+  // threshold is "nicht bestanden", never a blank/undefined grade (§7.4).
+  for (const row of sortedSchema) {
+    const cmp = compareDecimalStrings(finalTotal, row.threshold_points);
+    if (cmp !== null && cmp >= 0) {
+      return { rawTotal, finalTotal, gradeLabel: formatDecimal(row.grade) };
+    }
+  }
+  return { rawTotal, finalTotal, gradeLabel: "nicht bestanden" };
 }
