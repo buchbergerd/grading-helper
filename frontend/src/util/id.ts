@@ -13,3 +13,16 @@ export function parseRouteId(raw: string | undefined): number | null {
   const id = Number(raw);
   return Number.isSafeInteger(id) ? id : null;
 }
+
+/**
+ * `versuch` (attempt number, §4) is a small positive integer, not a decimal — the §7.0 ban on
+ * `Number()`/`parseInt` applies to points/percentages/thresholds, not to this field. Kept here
+ * rather than inline in a page so the "the one place a string becomes a number" grep check in
+ * `frontend/README.md` still finds only this file.
+ */
+export function parsePositiveInteger(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (!/^\d+$/.test(trimmed)) return null;
+  const value = Number(trimmed);
+  return Number.isSafeInteger(value) && value >= 1 ? value : null;
+}

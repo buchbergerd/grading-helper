@@ -11,7 +11,7 @@ Status: milestone 1 (§15.1) — login, Lecture/Exam CRUD, admin account managem
 ```
 frontend/
 ├── src/
-│   ├── api/client.ts      # typed client for the FastAPI backend (docs/api-contract-m1.md)
+│   ├── api/client.ts      # typed client for the FastAPI backend (docs/api-contract.md)
 │   ├── auth/              # AuthContext, RequireAuth / RequireAdmin route guards
 │   ├── pages/             # Login, Lecture list/detail, Exam detail, Admin users, ...
 │   ├── components/        # shared message rendering, confirm dialog

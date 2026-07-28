@@ -1,4 +1,4 @@
-"""Lecture CRUD (§4, §13 — ``docs/api-contract-m1.md`` section "Lectures").
+"""Lecture CRUD (§4, §13 — ``docs/api-contract.md`` section "Lectures").
 
 A lecture is a purely internal organisational label chosen by the instructor (§4) — never
 derived from or validated against a registration PDF's title line. Its only job is to group an

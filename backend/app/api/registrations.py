@@ -91,7 +91,7 @@ def _raise_validation_errors(errors: list[str], **extra: Any) -> NoReturn:
     """Raise the contract's ``422`` shape, optionally with machine-readable extras.
 
     ``{"detail": {"errors": [<German>, ...], ...}}`` — the ``errors`` key is what the frontend's
-    single German-message renderer consumes (``docs/api-contract-m1.md``); the extra keys carry
+    single German-message renderer consumes (``docs/api-contract.md``); the extra keys carry
     the structured detail (per-file parser errors, duplicate Matrikelnummern) a UI needs to offer
     a resolution rather than just a sentence.
 

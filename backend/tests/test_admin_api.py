@@ -1,4 +1,4 @@
-"""Account management routes (``/api/admin/*``, §3 and ``docs/api-contract-m1.md``).
+"""Account management routes (``/api/admin/*``, §3 and ``docs/api-contract.md``).
 
 Two properties get the most attention here because they are the ones that fail silently:
 revocation actually happening on deactivation/reset, and an admin being unable to lock the

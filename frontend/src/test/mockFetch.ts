@@ -15,6 +15,21 @@ export function jsonResponse(status: number, body: unknown): Response {
   } as unknown as Response;
 }
 
+/**
+ * Stand-in for a binary `Response` (the attendance-list PDF download): adds `blob()` and a
+ * `headers.get()` that reads `Content-Disposition`, which `jsonResponse` above doesn't need.
+ */
+export function blobResponse(status: number, body: Blob, headers: Record<string, string> = {}): Response {
+  const headerMap = new Map(Object.entries(headers).map(([key, value]) => [key.toLowerCase(), value]));
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    blob: () => Promise.resolve(body),
+    text: () => Promise.resolve(""),
+    headers: { get: (name: string) => headerMap.get(name.toLowerCase()) ?? null },
+  } as unknown as Response;
+}
+
 export type RouteHandler = (url: string, init: RequestInit | undefined) => Response;
 
 /**

@@ -9,12 +9,13 @@ code — do not rely on a summary of it, including this one.** This file does no
 spec; it only points at it and lists the constraints an implementation is most likely to violate
 silently. If this file and the spec ever disagree, the spec wins — fix this file.
 
-Current status: **milestone 1 (§15.1) done** — data model, auth/accounts, Lecture/Exam CRUD,
-minimal React UI. Next is §15.2 (registration-PDF import → attendance list).
+Current status: **milestones 1–2 (§15.1, §15.2) done** — data model, auth/accounts, Lecture/Exam
+CRUD, registration-PDF import, attendance-list PDF, and the React UI over all of it. Next is
+§15.3 (points/attendance entry + the grading engine).
 `SPECIFICATION.md` §15 gives the intended build order — follow it rather than jumping to
 whichever feature seems easiest.
 
-`docs/api-contract-m1.md` is the backend↔frontend HTTP contract. Keep it in sync when you change
+`docs/api-contract.md` is the backend↔frontend HTTP contract. Keep it in sync when you change
 an endpoint; it exists so neither side has to read the other's code.
 
 ## Repo layout
@@ -24,8 +25,9 @@ an endpoint; it exists so neither side has to read the other's code.
 - `deploy/` — Docker/compose skeletons. See `deploy/README.md`.
 - `docs/open-questions.md` — tracked register of the spec's open assumptions (§14). Check it
   before making a call on something the spec left open; update it when you resolve or add one.
-- `scripts/` — dev tooling, e.g. the synthetic multi-page PDF fixture generator (not yet
-  written — required before §5.2/§5.3 parsing tests can be complete).
+- `backend/scripts/` — dev tooling: `create_admin.py` (bootstrap the first account) and
+  `make_fixtures.py` (regenerates the synthetic registration PDFs in `test_data/`; the generated
+  PDFs are committed, so tests never need Typst to run).
 - `test_data/` — anonymized/synthetic registration-PDF fixtures only. Never add a real
   (non-anonymized) export here — see the root `.gitignore` and `test_data/README.md`.
 
@@ -62,18 +64,21 @@ implementing agent, not because they're exhaustive. Section references are to `S
   "cap the final grade at pass." Get this backwards and bonus silently turns fails into passes.
 - **Attendance overrides grade** (§7.4): `attended = false` → "n.e.", full stop, regardless of
   points. `attended = true` and below passing → "nicht bestanden" (text, not a number).
-- **Import row-count checksum must hard-fail, not warn** (§5.3): parsed `Nr.` values must be a
-  contiguous `1..N` matching the page footer's declared count. A silently-dropped page is named
-  in the spec as the single worst realistic failure mode for this app — do not relax this to a
-  warning for convenience.
+- **Import completeness check must hard-fail, not warn** (§5.3): parsed `Nr.` values must be a
+  contiguous `1..N`, **and** every page the `Seite X von Y` footer declares must be present. A
+  silently-dropped page is named in the spec as the single worst realistic failure mode for this
+  app — do not relax either check to a warning for convenience. The two are not redundant:
+  dropping the **last** page leaves the surviving rows a clean contiguous `1..N`, so only the
+  page check catches it (`test_dropping_the_last_page_is_caught_by_the_footer_check_alone`).
 - **`module_title` is captured verbatim per course PDF and never normalized or cross-checked**
   against other PDFs in the same Exam (§4, §5.1) — a Kombinationsprüfung legitimately has a
   different module name/CP/BPO version per course. `course_code` (the short parenthetical) is
   the separate, deliberately-normalized grouping/sort key — don't conflate the two.
 - **DIN 5007-1 German collation for the attendance-list sort** (§6), not codepoint order
   ("Öztürk" sorts under O; ß ≍ ss). Sort names exactly as printed in the source PDF — no
-  nobiliary-particle reordering. Implementation choice (pyuca vs. PyICU) is tracked as an open
-  item in `docs/open-questions.md` — resolve it there, don't silently default to `str.sort()`.
+  nobiliary-particle reordering. Use `app/collation.py::german_sort_key`; never `str.sort()`,
+  and never an SQL `ORDER BY` on a name column — that *is* the codepoint sort §6 warns about.
+  Sorting happens in Python, in the report layer.
 - **Completeness gate blocks exports** (§8.1): the examination-office and student-results
   reports must refuse to generate if any non-excluded student is missing attendance or (when
   attended) any exercise point. Never substitute an implicit zero.

@@ -1,4 +1,4 @@
-"""Exam CRUD (§4, §7, §8.1, §13 — ``docs/api-contract-m1.md`` section "Exams").
+"""Exam CRUD (§4, §7, §8.1, §13 — ``docs/api-contract.md`` section "Exams").
 
 This module also owns the lecture/exam **access helpers** and the exam **serialisation**
 helpers, because ``app/api/lectures.py`` needs both and this keeps the import edge

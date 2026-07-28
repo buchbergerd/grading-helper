@@ -306,6 +306,10 @@ export default function ExamDetailPage(): JSX.Element {
           : `${exam.registration_count} angemeldete Studierende`}
       </p>
 
+      <p>
+        <Link to={`/klausuren/${exam.id}/anmeldungen`}>Anmeldungen verwalten</Link>
+      </p>
+
       <ErrorList messages={messages} title={messages.length > 1 ? "Bitte prüfen:" : undefined} />
       {saved ? <SuccessNotice>Die Klausur wurde gespeichert.</SuccessNotice> : null}
 

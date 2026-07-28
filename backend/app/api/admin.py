@@ -1,4 +1,4 @@
-"""Account management — admin only (§3, ``docs/api-contract-m1.md``).
+"""Account management — admin only (§3, ``docs/api-contract.md``).
 
 Every route here touches **only** the ``users`` and ``user_sessions`` tables. Per §14 #5 the
 admin role is account management, not a support back door into other instructors' exam data

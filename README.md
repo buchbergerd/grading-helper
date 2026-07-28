@@ -21,7 +21,7 @@ reports) exists yet.
   subtly wrong.
 - [`docs/open-questions.md`](docs/open-questions.md) — tracked register of the spec's open
   assumptions/risks (§14) plus anything new found during implementation.
-- [`docs/api-contract-m1.md`](docs/api-contract-m1.md) — the HTTP contract between backend and
+- [`docs/api-contract.md`](docs/api-contract.md) — the HTTP contract between backend and
   frontend, written before the code so the two sides agree without reading each other.
 
 ## Stack

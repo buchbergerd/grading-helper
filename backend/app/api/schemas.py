@@ -1,7 +1,7 @@
 """Pydantic v2 request/response models for the HTTP API.
 
 Shared by every route module; later milestones add the Lecture/Exam/registration shapes here.
-See ``docs/api-contract-m1.md`` for the authoritative field lists.
+See ``docs/api-contract.md`` for the authoritative field lists.
 
 Decimal-valued fields cross the wire as JSON **strings** (contract preamble, §7.0). Use the
 :data:`DecimalString` annotation for every one of them — see :func:`_parse_decimal_string` for
@@ -102,7 +102,7 @@ class ValidationErrors(BaseModel):
 
 
 # --------------------------------------------------------------------------------------------
-# Lectures and exams (§4, §7 — ``docs/api-contract-m1.md`` sections "Lectures" and "Exams")
+# Lectures and exams (§4, §7 — ``docs/api-contract.md`` sections "Lectures" and "Exams")
 # --------------------------------------------------------------------------------------------
 
 
@@ -166,9 +166,16 @@ DECIMAL_NO_EXPONENT_MESSAGE = (
 
 #: A decimal that is a JSON string in both directions. Never declare a points/percentage field
 #: as a bare ``Decimal``: pydantic's lax mode would route a JSON float through a binary double.
+#:
+#: ``json_schema_input_type=str`` is not cosmetic. Without it the generated OpenAPI advertises
+#: ``anyOf: [number, string]`` — the base ``Decimal`` type's default rendering — even though
+#: :func:`_parse_decimal_string` rejects a JSON number at runtime. A client generated from that
+#: schema would happily emit ``{"bonus_points": 0.75}`` and take a 422, and anyone reading the
+#: schema would conclude JSON numbers are supported. The docs must state the rule the code
+#: enforces.
 DecimalString = Annotated[
     Decimal,
-    BeforeValidator(_parse_decimal_string),
+    BeforeValidator(_parse_decimal_string, json_schema_input_type=str),
     PlainSerializer(_serialize_decimal, return_type=str),
 ]
 

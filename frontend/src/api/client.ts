@@ -1,5 +1,5 @@
 /**
- * Typed client for the milestone-1 API (`docs/api-contract-m1.md`).
+ * Typed client for the milestone-1 API (`docs/api-contract.md`).
  *
  * Two rules run through the whole file:
  *
@@ -183,6 +183,71 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/**
+ * One competing occurrence of a duplicate Matrikelnummer, as carried in a `422`'s
+ * `detail.duplicates[].occurrences` (see `_duplicate_occurrences` in
+ * `app/api/registrations.py`). Additive to `ApiError.messages`, which already contains the
+ * German sentence describing this — this is only for a UI that wants to render it as a table.
+ */
+export interface DuplicateOccurrence {
+  source: "upload" | "database";
+  filename: string | null;
+  course_code: string;
+  module_title: string;
+  registration_id: number | null;
+}
+
+export interface DuplicateMatrikelnummer {
+  matrikelnummer: string;
+  occurrences: DuplicateOccurrence[];
+}
+
+/**
+ * Reads `detail.duplicates` off an `ApiError.body` when the import route rejected on a
+ * duplicate Matrikelnummer (§5.3). Returns `null` for anything else — every field is narrowed
+ * with a type guard so nothing but known scalars is ever rendered from it.
+ */
+export function extractDuplicates(error: unknown): DuplicateMatrikelnummer[] | null {
+  if (!(error instanceof ApiError)) return null;
+  const body = error.body;
+  const detail = isRecord(body) ? body["detail"] : undefined;
+  const duplicates = isRecord(detail) ? detail["duplicates"] : undefined;
+  if (!Array.isArray(duplicates)) return null;
+
+  const result: DuplicateMatrikelnummer[] = [];
+  for (const entry of duplicates) {
+    if (!isRecord(entry)) continue;
+    const matrikelnummer = entry["matrikelnummer"];
+    const occurrencesRaw = entry["occurrences"];
+    if (typeof matrikelnummer !== "string" || !Array.isArray(occurrencesRaw)) continue;
+    const occurrences: DuplicateOccurrence[] = [];
+    for (const occurrence of occurrencesRaw) {
+      if (!isRecord(occurrence)) continue;
+      const source = occurrence["source"];
+      const courseCode = occurrence["course_code"];
+      const moduleTitle = occurrence["module_title"];
+      if (
+        (source !== "upload" && source !== "database") ||
+        typeof courseCode !== "string" ||
+        typeof moduleTitle !== "string"
+      ) {
+        continue;
+      }
+      const filename = occurrence["filename"];
+      const registrationId = occurrence["registration_id"];
+      occurrences.push({
+        source,
+        filename: typeof filename === "string" ? filename : null,
+        course_code: courseCode,
+        module_title: moduleTitle,
+        registration_id: typeof registrationId === "number" ? registrationId : null,
+      });
+    }
+    result.push({ matrikelnummer, occurrences });
+  }
+  return result;
+}
+
 /* ------------------------------------------------------------------ request */
 
 const BASE = "/api";
@@ -333,4 +398,220 @@ export function resetUserPassword(id: number, new_password: string): Promise<voi
     method: "POST",
     body: { new_password },
   });
+}
+
+/* ------------------------------------------------------------------ registrations (§5, §6) */
+
+export interface RegistrationOut {
+  id: number;
+  exam_id: number;
+  matrikelnummer: string;
+  nachname: string;
+  vorname: string;
+  course_code: string;
+  module_title: string;
+  versuch: number;
+  kommentar: string | null;
+  flagged: boolean;
+  excluded: boolean;
+  attended: boolean | null;
+  /** DECIMAL — string on purpose, see the file header. Not edited in this milestone. */
+  bonus_points: string;
+  source_filename: string | null;
+}
+
+/** Body for the manual "late registration" add (§5.3). `course_code`/`module_title` required. */
+export interface RegistrationCreateBody {
+  matrikelnummer: string;
+  nachname: string;
+  vorname: string;
+  course_code: string;
+  module_title: string;
+  versuch: number;
+  kommentar?: string | null;
+  flagged?: boolean;
+  excluded?: boolean;
+}
+
+/**
+ * Body for `PATCH /api/registrations/{id}`. Every field is optional and, per the contract,
+ * only the fields actually present are changed server-side (`model_fields_set`) — so callers
+ * must omit a field rather than send an empty string/false for "leave unchanged". `bonus_points`
+ * is typed `string` and must never be computed from a JS number (§7.0); it is not surfaced in
+ * this milestone's UI, but the type still forbids a `number` at the call site.
+ */
+export interface RegistrationUpdateBody {
+  matrikelnummer?: string;
+  nachname?: string;
+  vorname?: string;
+  course_code?: string;
+  module_title?: string;
+  versuch?: number;
+  kommentar?: string | null;
+  flagged?: boolean;
+  excluded?: boolean;
+  attended?: boolean | null;
+  bonus_points?: string;
+}
+
+export interface ImportedFileSummary {
+  filename: string;
+  course_code: string;
+  module_title: string;
+  semester: string;
+  termin: string;
+  row_count: number;
+  flagged_count: number;
+  engine: string;
+}
+
+export interface RegistrationImportResult {
+  imported_total: number;
+  replaced_count: number;
+  files: ImportedFileSummary[];
+  warnings: string[];
+}
+
+export interface CourseHeadCount {
+  course_code: string;
+  count: number;
+}
+
+/** §6: the print-count, shown without generating the attendance-list PDF. Excludes excluded. */
+export interface RegistrationHeadCount {
+  total: number;
+  per_course: CourseHeadCount[];
+}
+
+/**
+ * Every registration of the exam (excluded included — §5.3 keeps them for audit), German-
+ * collated by the server (course, then Nachname, then Vorname). Never re-sorted here: a
+ * client-side Matr.-Nr. sort would diverge from the §6 attendance-list ordering, which is the
+ * authoritative one.
+ */
+export function listRegistrations(
+  examId: number,
+  opts: { courseCode?: string } = {},
+): Promise<RegistrationOut[]> {
+  const query =
+    opts.courseCode !== undefined ? `?course_code=${encodeURIComponent(opts.courseCode)}` : "";
+  return request<RegistrationOut[]>(`/exams/${examId}/registrations${query}`);
+}
+
+export function countRegistrations(examId: number): Promise<RegistrationHeadCount> {
+  return request<RegistrationHeadCount>(`/exams/${examId}/registrations/count`);
+}
+
+export function createRegistration(
+  examId: number,
+  body: RegistrationCreateBody,
+): Promise<RegistrationOut> {
+  return request<RegistrationOut>(`/exams/${examId}/registrations`, { method: "POST", body });
+}
+
+export function updateRegistration(
+  id: number,
+  body: RegistrationUpdateBody,
+): Promise<RegistrationOut> {
+  return request<RegistrationOut>(`/registrations/${id}`, { method: "PATCH", body });
+}
+
+export function deleteRegistration(id: number): Promise<void> {
+  return request<void>(`/registrations/${id}`, { method: "DELETE" });
+}
+
+/**
+ * `POST /exams/{id}/registrations/import` — `multipart/form-data`, field name `files`
+ * (repeatable). Bypasses `request()` on purpose: that helper always sets
+ * `Content-Type: application/json`, and a multipart body must let the browser set
+ * `Content-Type: multipart/form-data; boundary=...` itself — setting it by hand here would
+ * omit/break the boundary and the server would fail to parse the parts.
+ */
+export async function importRegistrations(
+  examId: number,
+  files: File[],
+  replaceExisting: boolean,
+): Promise<RegistrationImportResult> {
+  const formData = new FormData();
+  for (const file of files) formData.append("files", file);
+  formData.append("replace_existing", replaceExisting ? "true" : "false");
+
+  let response: Response;
+  try {
+    response = await fetch(`${BASE}/exams/${examId}/registrations/import`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { Accept: "application/json" },
+      body: formData,
+    });
+  } catch {
+    throw new ApiError(0, ["Der Server ist nicht erreichbar."], null);
+  }
+
+  const parsed = await parseJsonBody(response);
+  if (!response.ok) {
+    throw new ApiError(response.status, extractMessages(response.status, parsed), parsed);
+  }
+  return parsed as RegistrationImportResult;
+}
+
+/** A downloaded binary report plus the filename the server declared for it. */
+export interface DownloadedFile {
+  blob: Blob;
+  filename: string;
+}
+
+/**
+ * `GET /exams/{id}/reports/attendance-list` — a PDF (§6), not JSON, so this bypasses `request()`
+ * entirely and reads the body as a `Blob`. The filename comes from the response's
+ * `Content-Disposition` header (`attachment; filename="..."; filename*=UTF-8''...`); the RFC
+ * 5987 `filename*` part is preferred since it carries German characters correctly.
+ */
+export async function downloadAttendanceList(examId: number): Promise<DownloadedFile> {
+  let response: Response;
+  try {
+    response = await fetch(`${BASE}/exams/${examId}/reports/attendance-list`, {
+      method: "GET",
+      credentials: "same-origin",
+      headers: { Accept: "application/pdf" },
+    });
+  } catch {
+    throw new ApiError(0, ["Der Server ist nicht erreichbar."], null);
+  }
+
+  if (!response.ok) {
+    const parsed = await parseJsonBody(response);
+    throw new ApiError(response.status, extractMessages(response.status, parsed), parsed);
+  }
+
+  const blob = await response.blob();
+  const filename =
+    filenameFromContentDisposition(response.headers.get("Content-Disposition")) ??
+    "anwesenheitsliste.pdf";
+  return { blob, filename };
+}
+
+async function parseJsonBody(response: Response): Promise<unknown> {
+  const raw = await response.text();
+  if (raw === "") return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function filenameFromContentDisposition(header: string | null): string | null {
+  if (header === null) return null;
+  const utf8Match = /filename\*=UTF-8''([^;]+)/i.exec(header);
+  const encoded = utf8Match?.[1];
+  if (encoded !== undefined) {
+    try {
+      return decodeURIComponent(encoded);
+    } catch {
+      // fall through to the ASCII fallback below
+    }
+  }
+  const asciiMatch = /filename="?([^";]+)"?/i.exec(header);
+  return asciiMatch?.[1] ?? null;
 }

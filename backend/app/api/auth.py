@@ -1,4 +1,4 @@
-"""Login, logout, identity and self-service password change (§3, ``docs/api-contract-m1.md``).
+"""Login, logout, identity and self-service password change (§3, ``docs/api-contract.md``).
 
 The session token only ever appears in a ``Set-Cookie`` header — never in a response body, a log
 line or an error message. Same for passwords.

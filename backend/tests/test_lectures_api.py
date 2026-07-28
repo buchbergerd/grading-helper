@@ -1,4 +1,4 @@
-"""Lecture routes (``/api/lectures*``, §4/§13 and ``docs/api-contract-m1.md``).
+"""Lecture routes (``/api/lectures*``, §4/§13 and ``docs/api-contract.md``).
 
 The properties under the most scrutiny here are the ones that fail silently: another
 instructor's lecture answering ``404`` rather than ``403`` (a ``403`` confirms the row exists),

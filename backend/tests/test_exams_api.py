@@ -1,4 +1,4 @@
-"""Exam routes (``/api/exams*``, §4/§7/§8.1/§13 and ``docs/api-contract-m1.md``).
+"""Exam routes (``/api/exams*``, §4/§7/§8.1/§13 and ``docs/api-contract.md``).
 
 Three properties get disproportionate attention because they are the ones that would be wrong
 *silently*:

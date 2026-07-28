@@ -112,9 +112,60 @@ Standard FastAPI/Pydantic validation errors keep their default `422` shape.
 **Password-policy failures use the same `{"detail": {"errors": [...]}}` shape** (on admin create,
 admin reset, and self-service change), so the frontend needs only one German-message renderer.
 
+## Registrations (§5.3) — milestone 2
+
+All routes owner-scoped through the exam; another instructor gets `404`, not `403`.
+
+`RegistrationOut`: `{id, exam_id, matrikelnummer, nachname, vorname, course_code, module_title,
+versuch, kommentar, flagged, excluded, attended, bonus_points, source_filename}`.
+`matrikelnummer` is a **string** (leading zeros are meaningful); `bonus_points` is a decimal and
+so follows the string rule above; `attended` is `true | false | null`, where `null` means "not
+yet recorded" and is deliberately distinct from `false` ("nicht erschienen", §7.4).
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| POST | `/api/exams/{id}/registrations/import` | `multipart/form-data`: repeated field **`files`** (one or more PDFs) + optional `replace_existing` | `201` + `{imported_total, replaced_count, files: [...], warnings: [...]}` |
+| GET | `/api/exams/{id}/registrations` | — | `[RegistrationOut]`, optional `course_code` filter |
+| POST | `/api/exams/{id}/registrations` | `{matrikelnummer, nachname, vorname, course_code, module_title, versuch, kommentar?, flagged?, excluded?}` | `201` — the manual late-registration path (§5.3). `course_code`/`module_title` are required: there is no PDF to take them from |
+| PATCH | `/api/registrations/{id}` | any subset, incl. `excluded`, `attended`, `bonus_points` | `200` + `RegistrationOut` |
+| DELETE | `/api/registrations/{id}` | — | `204`. A **real** deletion, for a row added in error — distinct from `excluded` |
+| GET | `/api/exams/{id}/registrations/count` | — | `{total, per_course: [{course_code, count}]}`, excluded students already omitted (§6's head count) |
+
+Import semantics, all from §5.3:
+
+- **One PDF = one Studiengang** (§5.1). Each row is tagged with **its own file's** `course_code`
+  and `module_title`. `module_title` is stored verbatim and is never normalised or cross-checked
+  between files — a Kombinationsprüfung legitimately differs per course (§4).
+- **The whole request is atomic**, across all files, not per file. §5.3 forbids a partial import,
+  and a half-imported exam is exactly the state where a student silently never gets a grade.
+- **`semester`/`termin` mismatch** between files (or against the exam) is a **warning**, not a
+  block — it usually means the wrong file was picked, but it is not corrupting.
+- **Duplicate Matrikelnummer** within the request or against already-imported rows is a `422`
+  requiring manual resolution — never a silent merge. The payload names the Matrikelnummer and
+  describes each competing occurrence so the UI can offer a choice.
+- **Kommentar ≠ `(angemeldet)`** → imported with `flagged: true`, never dropped and never
+  silently kept unmarked. The instructor decides per row whether to exclude it.
+- `replace_existing=true` first deletes this exam's existing registrations for the same
+  `course_code` — the "I uploaded the wrong file" path. Off by default.
+
+Failures return `422` with `{"detail": {"errors": [German messages], ...}}`, optionally carrying
+`files` (per-file parse errors) and `duplicates` (structured duplicate occurrences). The German
+messages are shown verbatim; per §5.3 these are hard failures the instructor must act on.
+
+## Reports — milestone 2
+
+| Method | Path | Response |
+|---|---|---|
+| GET | `/api/exams/{id}/reports/attendance-list` | `200 application/pdf` + `Content-Disposition` (ASCII fallback plus RFC 5987 `filename*` for umlauts) |
+
+Columns are Studiengang, Matr.-Nr., Nachname, Vorname plus a tick column, sorted by course then
+surname with **German DIN 5007-1 collation** (§6) computed in Python — never in SQL. Excluded
+students are omitted. An exam with no registrations still renders a valid PDF with a head count
+of 0 rather than erroring.
+
 ## Deferred to later milestones
 
-Registration import (§5), attendance list (§6), points entry (§8), reports (§9–§11). Editing
+Points entry (§8), reports (§9–§11). Editing
 `max_points` or the grading schema after points exist must trigger a visible recomputation
 (§8.1) — there are no points yet in M1, but the PATCH handler is where that hooks in: it already
 returns `recomputation_warning` and calls `app/api/exams.py::count_affected_registrations`, which

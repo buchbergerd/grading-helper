@@ -16,6 +16,8 @@
   --danger-soft: #fdf2f2;
   --ok: #1e6b34;
   --ok-soft: #f1f8f2;
+  --warn: #8a5a00;
+  --warn-soft: #fdf3dc;
   --radius: 4px;
 }
 
@@ -303,6 +305,43 @@ th.numeric {
 tfoot td {
   font-weight: 600;
   border-top: 2px solid var(--border);
+}
+
+/* Registration list (§5.3): a flagged row needs review, an excluded row is kept but out of
+   every downstream report — both must be visually obvious, not just present in the DOM. */
+tr.row-flagged td {
+  background: var(--warn-soft);
+}
+
+tr.row-excluded td {
+  background: var(--bg-soft);
+  color: var(--fg-muted);
+  text-decoration: line-through;
+}
+
+/* The badge itself is never struck through — it is the label explaining *why* the row looks
+   the way it does, so it must stay legible even on an excluded (struck-through) row. */
+.badge {
+  display: inline-block;
+  text-decoration: none;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  margin-right: 0.35rem;
+  white-space: nowrap;
+}
+
+.badge-warn {
+  background: var(--warn-soft);
+  color: var(--warn);
+  border: 1px solid var(--warn);
+}
+
+.badge-excluded {
+  background: var(--bg-soft);
+  color: var(--fg-muted);
+  border: 1px solid var(--border);
 }
 
 /* ---------------------------------------------------------------- messages */
