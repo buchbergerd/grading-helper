@@ -522,6 +522,10 @@ export default function ExamDetailPage(): JSX.Element {
                 <tr>
                   <td colSpan={2}>Gesamtpunktzahl der Klausur</td>
                   <td data-testid="total-max-points">
+                    {/* Since Fix 1, displayMaxPoints never contains an unparseable entry (blanks
+                        and garbage are substituted with "0.00"), so sumMaxPoints cannot return
+                        null here in practice — this table only renders once exercises.length >
+                        0. The null branch is kept as a defensive fallback, not dead code. */}
                     {totalMaxPoints === null ? EMPTY_DISPLAY : formatDecimal(totalMaxPoints)}
                   </td>
                   <td />
