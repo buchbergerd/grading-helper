@@ -186,14 +186,28 @@ When multiple PDFs are uploaded for one Exam:
   never receives a grade.
 - Instructors can also manually add/edit/remove a student registration after import (e.g. a
   late registration that never appeared in a PDF).
-- **Mandatory post-parse validation (per file)**: parsed row `Nr.` values must form a
-  contiguous sequence `1..N`; `N` must equal both the highest parsed `Nr.` and the page
-  footer's declared count (e.g. "Seite 1 von Y" combined with rows-per-page, or an explicit
-  total if the format provides one). If this check fails — e.g. a page was skipped, a row
-  failed to parse — **hard-fail the import** for that file with a clear error naming the
-  missing `Nr.` values, rather than silently importing a partial list. Silently dropping a page
-  (a student never gets a grade, with nothing visibly wrong) is the single worst realistic
-  failure mode for this feature, so this check is mandatory, not a nice-to-have.
+- **Mandatory post-parse validation (per file)** — two *independent* checks, both required:
+  1. **Row continuity**: parsed row `Nr.` values must form a contiguous sequence `1..N` with no
+     gaps and no duplicates, and `N` must equal the highest parsed `Nr.`.
+  2. **Page completeness**: every page the footer declares must be present and parsed — the set
+     of printed page numbers must equal `{1..Y}` from `Seite X von Y`, with one consistent `Y`.
+
+  If either check fails — e.g. a page was skipped, a row failed to parse — **hard-fail the
+  import** for that file with a clear error naming the missing `Nr.` values and/or page numbers,
+  rather than silently importing a partial list. Silently dropping a page (a student never gets
+  a grade, with nothing visibly wrong) is the single worst realistic failure mode for this
+  feature, so this is mandatory, not a nice-to-have.
+
+  **Check 2 is not redundant with check 1**, which is why both are listed. Losing a page from
+  the *middle* leaves a gap in the `Nr.` sequence, so check 1 catches it. Losing the **last**
+  page does not: the surviving rows are a flawless contiguous `1..N` with `N` equal to the
+  highest `Nr.`, and nothing about the row data itself indicates anything is missing. Only the
+  footer knows there should have been another page. (Corrected 2026-07-28: this clause
+  previously required `N` to equal "the page footer's declared count … combined with
+  rows-per-page". The real export's footer declares *pages*, not rows, and rows-per-page is a
+  layout artefact that is neither declared nor constant, so no row total can be derived from it.
+  If a future export format does print an explicit participant total, check it as well —
+  it would additionally catch a page that is present but only partially parsed.)
 
 ---
 
