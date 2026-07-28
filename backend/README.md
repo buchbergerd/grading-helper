@@ -18,7 +18,7 @@ backend/
 │       ├── templates/         # Typst (.typ) templates for attendance list, internal/office/student reports
 │       └── ...                # statistics module shared by internal-report PDF + dashboard (§9)
 ├── tests/
-│   ├── fixtures/               # synthetic multi-page registration PDF (see /scripts), grading test vectors
+│   ├── test_fixtures_are_wellformed.py  # guards the synthetic PDFs in /test_data (see scripts/make_fixtures.py)
 │   └── ...
 └── pyproject.toml
 ```
