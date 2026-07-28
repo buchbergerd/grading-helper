@@ -233,8 +233,21 @@ When multiple PDFs are uploaded for one Exam:
 All point/percentage/threshold arithmetic — exercise points, bonus points, percentages,
 computed thresholds, and the comparisons that assign a grade — **must use exact decimal
 arithmetic** (e.g. Python's `decimal.Decimal`) end to end, never binary floating point.
-`0.6 * 45` in IEEE-754 floats is `27.000000000000004`, and grade boundaries are exactly where
-that kind of error flips a result. This also constrains storage: SQLite's default `REAL`
+Grade boundaries are exactly where that kind of error flips a result. Worked example, on a
+50-point exam with the 4.0 threshold at 29 %:
+
+| | computation | threshold |
+|---|---|---|
+| exact (`Decimal`) | `29/100 × 50 = 14.5`, floored to the nearest 0.5 | **14.5** |
+| IEEE-754 float | `29/100*50` is `14.499999999999998`, floored to the nearest 0.5 | **14.0** |
+
+Half a point too low, silently — every student between 14.0 and 14.49 passes an exam they
+failed. (Corrected 2026-07-28: this paragraph previously cited `0.6 * 45` as evaluating to
+`27.000000000000004`. It does not — in CPython `0.6*45`, `45*0.6` and `60/100*45` are all
+exactly `27.0`, so that example would have *passed* under a naive float implementation and
+argued against the very requirement it was cited for.)
+
+This also constrains storage: SQLite's default `REAL`
 affinity is a binary float, so points/percentages must be stored as `TEXT`/`NUMERIC` with
 explicit `Decimal` conversion on read/write, not as a bare `REAL` column. An implementing
 agent defaulting to plain floats here is the most likely source of silent, hard-to-notice

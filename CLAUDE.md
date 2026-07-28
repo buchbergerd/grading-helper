@@ -9,11 +9,15 @@ code — do not rely on a summary of it, including this one.** This file does no
 spec; it only points at it and lists the constraints an implementation is most likely to violate
 silently. If this file and the spec ever disagree, the spec wins — fix this file.
 
-Current status: **milestones 1–3 backend (§15.1-§15.3) done** — data model, auth/accounts,
-Lecture/Exam CRUD, registration-PDF import, attendance-list PDF, the grading engine
-(`app/grading/engine.py`), and the points/attendance entry API (`app/api/points.py`) over all of
-it, plus the React UI for milestones 1–2. Still open for §15.3: the points-entry frontend. Next
-up per §15 is §15.4 (internal report: shared statistics module, PDF + interactive dashboard).
+Current status: **milestones 1–3 (§15.1–§15.3) complete, backend and frontend** — data model,
+auth/accounts, Lecture/Exam CRUD, registration-PDF import, attendance-list PDF, the grading
+engine (`app/grading/engine.py`), the points/attendance API (`app/api/points.py`), and the React
+UI over all of it including the spreadsheet-style points grid. §7.5's worked example passes both
+as engine unit tests and end-to-end through HTTP.
+
+**Next up: §15.4** — the internal report: one shared statistics module feeding both a Typst PDF
+and an interactive in-app dashboard, so the two can never disagree. Then §15.5 (examination-office
+and student-results reports, PDF + Excel) and §15.6 (copy-forward, exam deletion, Docker).
 `SPECIFICATION.md` §15 gives the intended build order — follow it rather than jumping to
 whichever feature seems easiest.
 
