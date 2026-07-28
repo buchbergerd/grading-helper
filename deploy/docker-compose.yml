@@ -1,0 +1,19 @@
+# Skeleton — see deploy/Dockerfile. Intended to sit behind an existing department reverse
+# proxy (§13): this service serves plain HTTP internally, no TLS/public exposure here.
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      # Persistent SQLite database file — back this volume up (§13: backup strategy is a
+      # department-ops decision, not handled by the app).
+      - gradinghelper-data:/app/data
+    environment:
+      - DATABASE_PATH=/app/data/gradinghelper.db
+    restart: unless-stopped
+
+volumes:
+  gradinghelper-data:

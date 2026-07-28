@@ -1,0 +1,336 @@
+/**
+ * Typed client for the milestone-1 API (`docs/api-contract-m1.md`).
+ *
+ * Two rules run through the whole file:
+ *
+ * 1. **Decimal-valued fields are `string`, never `number`.** `max_points`, `percentage`,
+ *    `bonus_points`, `grade` and any points value cross the wire as JSON strings and stay
+ *    strings here. A JSON number is parsed into an IEEE-754 double by `JSON.parse`, which
+ *    both loses the exactness §7.0 requires and destroys significant trailing zeros
+ *    ("12.50" -> 12.5). Nothing in this frontend ever converts them; only
+ *    `src/grading/preview.ts` computes with them, on an explicit bigint scale.
+ * 2. **The session is an HttpOnly cookie.** Every request sends `credentials: "same-origin"`
+ *    and the token is never read, copied or stored in JS/localStorage — that is the point of
+ *    HttpOnly. Same-origin is enough because dev proxies `/api` and prod serves one origin.
+ */
+
+/* ------------------------------------------------------------------ types */
+
+export interface User {
+  id: number;
+  username: string;
+  is_admin: boolean;
+}
+
+/** Admin listing shape — the user rows plus the account-management fields. */
+export interface AdminUser extends User {
+  is_active: boolean;
+  /** ISO timestamp from the server; formatted for display with util/format formatDate. */
+  created_at: string;
+}
+
+export interface LectureSummary {
+  id: number;
+  name: string;
+  created_at: string;
+  exam_count: number;
+}
+
+/** `GET /api/lectures/{id}` — "lecture + its exams (summary shape)". */
+export interface LectureDetail {
+  id: number;
+  name: string;
+  created_at: string;
+  exam_count?: number;
+  exams: ExamSummary[];
+}
+
+/** §7.3. */
+export type BonusMode = "ALWAYS" | "ONLY_IF_PASSING_WITHOUT_BONUS";
+
+export interface Exercise {
+  /** Absent for a row the client just added; the server assigns it. */
+  id?: number;
+  name: string;
+  /** DECIMAL — string on purpose, see the file header. Example: "12.5". */
+  max_points: string;
+  position: number;
+}
+
+export interface GradingSchemaRow {
+  /** DECIMAL — one of the ten §7.1 grades as a string, e.g. "1.3". Never a JSON number. */
+  grade: string;
+  /** DECIMAL — percentage of the exam's total points, e.g. "95" or "62.5". */
+  percentage: string;
+}
+
+export interface ExamSummary {
+  id: number;
+  lecture_id: number;
+  lecture_name: string;
+  semester: string;
+  termin: string;
+  /** "YYYY-MM-DD" or null on the wire; German DD.MM.YYYY is applied in the UI only. */
+  exam_date: string | null;
+  bonus_mode: BonusMode;
+  owner_id: number;
+}
+
+export interface ExamDetail extends ExamSummary {
+  exercises: Exercise[];
+  grading_schema: GradingSchemaRow[];
+  registration_count: number;
+}
+
+/** Body for POST/PATCH on exams. Exercises/schema are a full replace, never a merge. */
+export interface ExamWriteBody {
+  semester?: string;
+  termin?: string;
+  exam_date?: string | null;
+  bonus_mode?: BonusMode;
+  exercises?: Exercise[];
+  grading_schema?: GradingSchemaRow[];
+  owner_id?: number;
+}
+
+/* ------------------------------------------------------------------ errors */
+
+/**
+ * The single error type for every failed request. Carries the HTTP status plus the parsed
+ * `detail`, normalised into a list of German messages that can be rendered verbatim.
+ *
+ * Three `detail` shapes exist in the wild here:
+ *   - FastAPI default:            {"detail": "Ungültige Zugangsdaten."}
+ *   - contract's validation form: {"detail": {"errors": ["…", "…"]}}   (§7.2 messages)
+ *   - Pydantic's own 422:         {"detail": [{"loc": [...], "msg": "...", ...}]}
+ */
+export class ApiError extends Error {
+  readonly status: number;
+  /** Server-provided German messages; never empty (falls back to a generic message). */
+  readonly messages: string[];
+  /** The raw parsed body, kept for debugging. Never rendered directly. */
+  readonly body: unknown;
+
+  constructor(status: number, messages: string[], body: unknown) {
+    const text = messages.length > 0 ? messages.join(" ") : `HTTP ${status}`;
+    super(text);
+    this.name = "ApiError";
+    this.status = status;
+    this.messages = messages.length > 0 ? messages : [text];
+    this.body = body;
+  }
+
+  /** True for "not logged in" — treated as a state, not an error, by AuthContext. */
+  get isUnauthorized(): boolean {
+    return this.status === 401;
+  }
+}
+
+/**
+ * German messages for anything thrown by this client, for direct display. Server-provided
+ * text is passed through verbatim — the backend owns the wording of §7.2's validation errors
+ * and of the login failure.
+ */
+export function errorMessages(error: unknown): string[] {
+  if (error instanceof ApiError) return error.messages;
+  return ["Unerwarteter Fehler. Bitte erneut versuchen."];
+}
+
+function extractMessages(status: number, body: unknown): string[] {
+  const detail = isRecord(body) ? body["detail"] : undefined;
+
+  if (typeof detail === "string" && detail.trim() !== "") return [detail];
+
+  if (isRecord(detail)) {
+    const errors = detail["errors"];
+    if (Array.isArray(errors)) {
+      const messages = errors.filter((e): e is string => typeof e === "string");
+      if (messages.length > 0) return messages;
+    }
+  }
+
+  if (Array.isArray(detail)) {
+    // Pydantic's default 422: [{loc, msg, type}, ...]
+    const messages = detail
+      .map((entry) => (isRecord(entry) && typeof entry["msg"] === "string" ? entry["msg"] : null))
+      .filter((msg): msg is string => msg !== null);
+    if (messages.length > 0) return messages;
+  }
+
+  return [fallbackMessage(status)];
+}
+
+function fallbackMessage(status: number): string {
+  switch (status) {
+    case 400:
+      return "Die Anfrage wurde abgelehnt.";
+    case 401:
+      return "Nicht angemeldet.";
+    case 403:
+      return "Keine Berechtigung für diese Aktion.";
+    case 404:
+      return "Nicht gefunden.";
+    case 409:
+      return "Konflikt: Die Aktion wurde nicht ausgeführt.";
+    case 422:
+      return "Die Eingaben sind ungültig.";
+    default:
+      return `Serverfehler (HTTP ${status}).`;
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/* ------------------------------------------------------------------ request */
+
+const BASE = "/api";
+
+interface RequestOptions {
+  method?: "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
+  body?: unknown;
+}
+
+async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  const method = options.method ?? "GET";
+  const hasBody = options.body !== undefined;
+
+  let response: Response;
+  try {
+    response = await fetch(`${BASE}${path}`, {
+      method,
+      // The session cookie is HttpOnly; this is the only way it reaches the server, and the
+      // only credential handling this app does.
+      credentials: "same-origin",
+      headers: hasBody
+        ? { "Content-Type": "application/json", Accept: "application/json" }
+        : { Accept: "application/json" },
+      body: hasBody ? JSON.stringify(options.body) : undefined,
+    });
+  } catch {
+    throw new ApiError(0, ["Der Server ist nicht erreichbar."], null);
+  }
+
+  if (response.status === 204) return undefined as T;
+
+  const raw = await response.text();
+  let parsed: unknown = null;
+  if (raw !== "") {
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      parsed = null;
+    }
+  }
+
+  if (!response.ok) {
+    throw new ApiError(response.status, extractMessages(response.status, parsed), parsed);
+  }
+
+  return parsed as T;
+}
+
+/* ------------------------------------------------------------------ auth */
+
+export function login(username: string, password: string): Promise<User> {
+  return request<User>("/auth/login", { method: "POST", body: { username, password } });
+}
+
+export function logout(): Promise<void> {
+  return request<void>("/auth/logout", { method: "POST" });
+}
+
+export function me(): Promise<User> {
+  return request<User>("/auth/me");
+}
+
+export function changePassword(current_password: string, new_password: string): Promise<void> {
+  return request<void>("/auth/password", {
+    method: "POST",
+    body: { current_password, new_password },
+  });
+}
+
+/* ------------------------------------------------------------------ lectures */
+
+export function listLectures(): Promise<LectureSummary[]> {
+  return request<LectureSummary[]>("/lectures");
+}
+
+export function createLecture(name: string): Promise<LectureSummary> {
+  return request<LectureSummary>("/lectures", { method: "POST", body: { name } });
+}
+
+export function getLecture(id: number): Promise<LectureDetail> {
+  return request<LectureDetail>(`/lectures/${id}`);
+}
+
+export function updateLecture(id: number, name: string): Promise<LectureSummary> {
+  return request<LectureSummary>(`/lectures/${id}`, { method: "PATCH", body: { name } });
+}
+
+/**
+ * Destructive: cascades to every exam of this lecture and all their grades (§13). The API
+ * refuses with 409 unless `?confirm=true` is passed, so the caller must have shown a
+ * confirmation dialog first.
+ */
+export function deleteLecture(id: number): Promise<void> {
+  return request<void>(`/lectures/${id}?confirm=true`, { method: "DELETE" });
+}
+
+/* ------------------------------------------------------------------ exams */
+
+export function listExams(lectureId: number): Promise<ExamSummary[]> {
+  return request<ExamSummary[]>(`/exams?lecture_id=${lectureId}`);
+}
+
+/**
+ * Omitting `exercises`/`grading_schema` makes the server copy them forward from the lecture's
+ * most recent prior exam (§4) — a one-time copy. Pass them only to override that.
+ */
+export function createExam(lectureId: number, body: ExamWriteBody): Promise<ExamDetail> {
+  return request<ExamDetail>(`/lectures/${lectureId}/exams`, { method: "POST", body });
+}
+
+export function getExam(id: number): Promise<ExamDetail> {
+  return request<ExamDetail>(`/exams/${id}`);
+}
+
+export function updateExam(id: number, body: ExamWriteBody): Promise<ExamDetail> {
+  return request<ExamDetail>(`/exams/${id}`, { method: "PATCH", body });
+}
+
+/** Destructive: cascades to registrations and points (§13); needs the same confirmation. */
+export function deleteExam(id: number): Promise<void> {
+  return request<void>(`/exams/${id}?confirm=true`, { method: "DELETE" });
+}
+
+/* ------------------------------------------------------------------ admin */
+
+export function listUsers(): Promise<AdminUser[]> {
+  return request<AdminUser[]>("/admin/users");
+}
+
+export function createUser(body: {
+  username: string;
+  password: string;
+  is_admin?: boolean;
+}): Promise<AdminUser> {
+  return request<AdminUser>("/admin/users", { method: "POST", body });
+}
+
+export function updateUser(
+  id: number,
+  body: { is_active?: boolean; is_admin?: boolean },
+): Promise<AdminUser> {
+  return request<AdminUser>(`/admin/users/${id}`, { method: "PATCH", body });
+}
+
+/** Admin password reset; also kills that user's sessions server-side. */
+export function resetUserPassword(id: number, new_password: string): Promise<void> {
+  return request<void>(`/admin/users/${id}/password`, {
+    method: "POST",
+    body: { new_password },
+  });
+}

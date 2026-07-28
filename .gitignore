@@ -1,0 +1,50 @@
+# --- Python (backend) ---
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- Node (frontend) ---
+node_modules/
+dist/
+build/
+.vite/
+*.tsbuildinfo
+*.local
+
+# --- App data & generated output ---
+# SQLite database (persistent volume in deployment; never commit real exam data)
+*.db
+*.sqlite
+*.sqlite3
+backend/data/
+# Rendered reports (PDF/xlsx produced at runtime, not build artifacts to track)
+backend/generated/
+*.generated.pdf
+*.generated.xlsx
+
+# --- Test data safety net ---
+# This project handles real student personal data (Matrikelnummer, names).
+# Only the known anonymized fixtures below are allowed in test_data/; any other
+# PDF dropped there (e.g. a real, non-anonymized export used for local debugging)
+# must never be committed.
+test_data/*.pdf
+!test_data/ZPrf_Grundlagen_der_Informationstechnik_B_Sc_WiIng_ET_IT_WiSe_23_24_TestData.pdf
+!test_data/*_synthetic*.pdf
+
+# --- Editors / OS ---
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# --- Env / secrets ---
+.env
+.env.*
+!.env.example
