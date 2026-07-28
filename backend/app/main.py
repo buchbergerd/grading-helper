@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.api import admin, auth, exams, lectures
+from app.api import admin, auth, exams, lectures, registrations, reports
 from app.db import init_db
 
 
@@ -35,10 +35,15 @@ async def health() -> dict[str, str]:
 
 
 # Routers are registered here as the milestones land. Still to come: registration import
-# (§15.2), points entry (§15.3), reports (§15.4-§15.5).
+# (§15.2), points entry (§15.3), the remaining reports (§15.4-§15.5).
 app.include_router(auth.router, prefix="/api")
 app.include_router(admin.router, prefix="/api")
 app.include_router(lectures.router, prefix="/api")
 # The exams router carries no prefix of its own: it owns both ``/api/exams/...`` and the
 # nested creation route ``/api/lectures/{id}/exams`` (contract: Exams).
 app.include_router(exams.router, prefix="/api")
+# Same reasoning: this router owns both ``/api/exams/{id}/registrations...`` (§5.3 import and
+# list) and the flat ``/api/registrations/{id}`` edit/delete routes.
+app.include_router(registrations.router, prefix="/api")
+# Exam-scoped generated documents, e.g. ``/api/exams/{id}/reports/attendance-list`` (§6).
+app.include_router(reports.router, prefix="/api")

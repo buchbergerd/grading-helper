@@ -302,3 +302,131 @@ class ExamUpdateRequest(BaseModel):
     owner_id: int | None = None
     exercises: list[ExerciseInput] | None = None
     grading_schema: list[GradeThresholdInput] | None = None
+
+
+# --------------------------------------------------------------------------------------------
+# Student registrations (§5.1, §5.3, §6 — see ``app/api/registrations.py``)
+# --------------------------------------------------------------------------------------------
+
+
+class RegistrationOut(BaseModel):
+    """One student registration as the API returns it.
+
+    ``flagged`` and ``excluded`` are both carried on every response: §5.3 requires the UI to
+    highlight a row whose ``Kommentar`` is not the normal "(angemeldet)", and to show — rather
+    than hide — a student the instructor has excluded, because ``excluded`` is a flag and never
+    a deletion.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    exam_id: int
+    matrikelnummer: str
+    nachname: str
+    vorname: str
+    course_code: str
+    module_title: str
+    versuch: int
+    kommentar: str | None
+    flagged: bool
+    excluded: bool
+    attended: bool | None
+    bonus_points: DecimalString
+    source_filename: str | None
+
+
+class RegistrationCreateRequest(BaseModel):
+    """``POST /api/exams/{exam_id}/registrations`` — the manual add of §5.3.
+
+    ``course_code`` and ``module_title`` are **required**: a manually added late registration has
+    no source PDF to take them from, and both are per-course data that must not be guessed at
+    from another file of the same exam (§4, §5.1 — a Kombinationsprüfung legitimately carries a
+    different module name per course).
+
+    ``flagged`` is derived from ``kommentar`` when omitted (anything other than the normal
+    "(angemeldet)" — including a free-text remark — flags the row for review, per §5.3), and can
+    be set explicitly to override that.
+    """
+
+    matrikelnummer: str = Field(min_length=1, max_length=64)
+    nachname: str = Field(min_length=1, max_length=255)
+    vorname: str = Field(min_length=1, max_length=255)
+    course_code: str = Field(min_length=1, max_length=255)
+    module_title: str = Field(min_length=1)
+    versuch: int = Field(default=1, ge=1)
+    kommentar: str | None = None
+    flagged: bool | None = None
+    excluded: bool = False
+
+
+class RegistrationUpdateRequest(BaseModel):
+    """``PATCH /api/registrations/{id}`` — omitted fields are left unchanged.
+
+    Presence is decided via ``model_fields_set`` because an explicit ``null`` is meaningful for
+    ``kommentar`` (clear the remark) and for ``attended`` (§4: ``NULL`` means "not yet
+    recorded", which the §8.1 completeness gate must be able to tell apart from an explicit
+    ``false``).
+    """
+
+    matrikelnummer: str | None = Field(default=None, min_length=1, max_length=64)
+    nachname: str | None = Field(default=None, min_length=1, max_length=255)
+    vorname: str | None = Field(default=None, min_length=1, max_length=255)
+    course_code: str | None = Field(default=None, min_length=1, max_length=255)
+    module_title: str | None = Field(default=None, min_length=1)
+    versuch: int | None = Field(default=None, ge=1)
+    kommentar: str | None = None
+    flagged: bool | None = None
+    excluded: bool | None = None
+    attended: bool | None = None
+    bonus_points: DecimalString | None = None
+
+
+class ImportedFileSummary(BaseModel):
+    """What one uploaded PDF contributed to the exam (§5.1: one PDF = one Studiengang).
+
+    ``module_title`` is the source file's title line verbatim and is deliberately *not*
+    reconciled with the other files' (§4, §5.1); ``course_code`` is the short parenthetical
+    grouping key. ``engine`` names the extraction engine that read the file (§5.2) — pdfplumber
+    normally, ``pymupdf`` when the fallback kicked in — so an odd import can be diagnosed
+    without re-running the parser.
+    """
+
+    filename: str
+    course_code: str
+    module_title: str
+    semester: str
+    termin: str
+    row_count: int
+    flagged_count: int
+    engine: str
+
+
+class RegistrationImportResult(BaseModel):
+    """``POST /api/exams/{exam_id}/registrations/import``.
+
+    ``warnings`` are German sentences meant to be shown verbatim; they never block an import
+    (§5.3 only makes semester/Termin mismatches a warning). ``replaced_count`` is the number of
+    pre-existing registrations ``replace_existing=true`` deleted.
+    """
+
+    imported_total: int
+    replaced_count: int
+    files: list[ImportedFileSummary]
+    warnings: list[str]
+
+
+class CourseHeadCount(BaseModel):
+    course_code: str
+    count: int
+
+
+class RegistrationHeadCount(BaseModel):
+    """``GET /api/exams/{exam_id}/registrations/count`` — §6's "how many exam copies to print".
+
+    Excluded students are left out of both numbers: §5.3 keeps them in the database for audit
+    but omits them from the attendance list, so counting them would over-print.
+    """
+
+    total: int
+    per_course: list[CourseHeadCount]
