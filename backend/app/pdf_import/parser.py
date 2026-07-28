@@ -248,14 +248,22 @@ def _parse_header_block(lines: list[str]) -> _HeaderMetadata:
     # never by matching known lecture names: §4 is emphatic that the Lecture name is neither
     # derived from nor validated against the PDF.
     title_lines = [line.strip() for line in lines[termin_index + 1 : pruefer_index] if line.strip()]
-    if len(title_lines) != 1:
-        # §14 #9 keeps a wrapped title line as an open question; guessing at a reassembly would
-        # silently invent a module_title, so an unexpected shape fails loudly instead.
+    if not title_lines:
         raise PdfHeaderError(
-            "Die Titelzeile (Modulname) konnte nicht eindeutig bestimmt werden: zwischen "
-            f"„Termin:“ und „Prüfer:“ stehen {len(title_lines)} Zeilen statt einer."
+            "Die Titelzeile (Modulname) konnte nicht bestimmt werden: zwischen „Termin:“ und "
+            "„Prüfer:“ steht keine Zeile."
         )
-    module_title = title_lines[0]
+    # §14 #9, resolved against a real sample: a long title wraps across several physical lines,
+    # e.g. "Grundlagen der Informationstechnik für" / "Wirtschaftsingenieurwesen (B.Sc. WiIng
+    # ET/IT) BPO 2020/2024". The region between "Termin:" and "Prüfer:" *is* the title by
+    # construction, so every line in it is one wrapped fragment and rejoining them with a single
+    # space reconstructs the printed title rather than guessing at one.
+    #
+    # Known gap: a wrap that hyphenates a word ("Wirtschaftsingenieur-" / "wesen") would come
+    # back as "Wirtschaftsingenieur- wesen". No observed export hyphenates — this one wraps at
+    # word boundaries — and de-hyphenating blind would corrupt a legitimately hyphenated title
+    # ("BPO 2020-" / "2024"). Revisit only with a real sample that exhibits it.
+    module_title = " ".join(" ".join(line.split()) for line in title_lines)
 
     parenthetical = _PARENTHETICAL_RE.search(module_title)
     # First parenthetical only: a Kombinationsprüfung title carries further text after the

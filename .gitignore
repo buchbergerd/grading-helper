@@ -34,8 +34,13 @@ backend/generated/
 # Only the known anonymized fixtures below are allowed in test_data/; any other
 # PDF dropped there (e.g. a real, non-anonymized export used for local debugging)
 # must never be committed.
+# Each real-export fixture is allowlisted by its exact filename, deliberately: a broad
+# pattern like *_TestData.pdf would silently admit the next file dropped in here, which is
+# precisely the accident this rule exists to prevent. Add a line only after confirming the
+# file is anonymized.
 test_data/*.pdf
 !test_data/ZPrf_Grundlagen_der_Informationstechnik_B_Sc_WiIng_ET_IT_WiSe_23_24_TestData.pdf
+!test_data/ZPrf_Grundlagen_der_Informationstechnik_fuer_Wirtschaftsingenieurwesen_B_Sc_WiIng_ET_IT_BPO_2020_2024_SoSe_26_TestData.pdf
 !test_data/*_synthetic*.pdf
 
 # --- Editors / OS ---

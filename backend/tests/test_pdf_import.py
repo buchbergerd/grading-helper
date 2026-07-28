@@ -40,6 +40,10 @@ SECOND_COURSE = TEST_DATA_DIR / "registration_synthetic_second_course.pdf"
 DUPLICATE = TEST_DATA_DIR / "registration_synthetic_duplicate_matrikelnummer.pdf"
 BROKEN_GAP = TEST_DATA_DIR / "registration_synthetic_broken_gap.pdf"
 BROKEN_MISSING_PAGE = TEST_DATA_DIR / "registration_synthetic_broken_missing_page.pdf"
+WRAPPED_TITLE = (
+    TEST_DATA_DIR / "ZPrf_Grundlagen_der_Informationstechnik_fuer_Wirtschaftsingenieurwesen"
+    "_B_Sc_WiIng_ET_IT_BPO_2020_2024_SoSe_26_TestData.pdf"
+)
 
 REAL_TITLE = "Grundlagen der Informationstechnik (B.Sc. WiIng ET/IT)"
 SECOND_COURSE_TITLE = (
@@ -515,15 +519,36 @@ def test_layout_errors_name_the_page_they_happened_on() -> None:
     assert "7" in excinfo.value.message
 
 
-def test_header_block_requires_exactly_one_title_line() -> None:
-    """§14 #9 leaves a wrapped title line open — guessing at a reassembly is worse than failing."""
+def test_header_block_rejoins_a_wrapped_title_line() -> None:
+    """§14 #9, resolved: every line between "Termin:" and "Prüfer:" is a wrapped title fragment.
+
+    Superseded the previous "exactly one line or fail" rule once a real export turned up that
+    wraps its title. Rejoining is not a guess — the region is the title by construction.
+    """
+    header = _parse_header_block(
+        [
+            "WiSe 23/24",
+            "Termin: 1. Termin",
+            "Grundlagen der Informationstechnik für ganz viele",
+            "Wirtschaftsingenieure (B.Sc. WiIng ET/IT)",
+            "Prüfer: Prof. Dr. Test",
+        ]
+    )
+
+    assert header.module_title == (
+        "Grundlagen der Informationstechnik für ganz viele "
+        "Wirtschaftsingenieure (B.Sc. WiIng ET/IT)"
+    )
+    assert header.course_code == "B.Sc. WiIng ET/IT"
+
+
+def test_header_block_requires_at_least_one_title_line() -> None:
+    """An empty region between "Termin:" and "Prüfer:" still fails loudly — nothing to rejoin."""
     with pytest.raises(PdfHeaderError) as excinfo:
         _parse_header_block(
             [
                 "WiSe 23/24",
                 "Termin: 1. Termin",
-                "Grundlagen der Informationstechnik für ganz viele",
-                "Wirtschaftsingenieure (B.Sc. WiIng ET/IT)",
                 "Prüfer: Prof. Dr. Test",
             ]
         )
@@ -594,3 +619,49 @@ def test_dropping_the_last_page_is_caught_by_the_footer_check_alone() -> None:
     assert error.missing_nrs == (), "the surviving Nr. sequence is contiguous — that is the point"
     assert error.missing_pages == (3,)
     assert "Seite 3" in error.message
+
+
+WRAPPED_TITLE_EXPECTED = (
+    "Grundlagen der Informationstechnik für Wirtschaftsingenieurwesen "
+    "(B.Sc. WiIng ET/IT) BPO 2020/2024"
+)
+
+
+@pytest.mark.parametrize("engine", ["pdfplumber", "pymupdf"])
+def test_title_line_wrapped_across_two_physical_lines(engine: str) -> None:
+    """§14 #9, resolved against a real (anonymized) export.
+
+    A long module title wraps in the header: "Grundlagen der Informationstechnik für" /
+    "Wirtschaftsingenieurwesen (B.Sc. WiIng ET/IT) BPO 2020/2024". The region between
+    "Termin:" and "Prüfer:" is the title by construction, so the fragments are rejoined with a
+    single space. Both engines must agree — the fallback reading a different module_title than
+    the primary would be a silent per-course data difference (§4).
+    """
+    parsed = parse_registration_pdf(WRAPPED_TITLE.read_bytes(), engine=engine)  # type: ignore[arg-type]
+
+    assert parsed.module_title == WRAPPED_TITLE_EXPECTED
+    assert parsed.course_code == "B.Sc. WiIng ET/IT"
+    assert parsed.semester == "SoSe 26"
+    assert parsed.termin == "1. Termin"
+
+
+def test_wrapped_title_fixture_rows_ignore_the_empty_background_shaded_rows() -> None:
+    """This export shades its table rows, which yields trailing all-empty table rows.
+
+    They must not become garbage student rows, and must not disturb the §5.3 checks.
+    Matrikelnummern here are 6 and 7 digits long — they stay strings, never ints.
+    """
+    parsed = parse_registration_pdf(WRAPPED_TITLE.read_bytes())
+
+    assert [row.nr for row in parsed.rows] == [1, 2, 3, 4]
+    assert [row.matrikelnummer for row in parsed.rows] == [
+        "456789",
+        "987654",
+        "1234567",
+        "7869504",
+    ]
+    assert all(isinstance(row.matrikelnummer, str) for row in parsed.rows)
+    # Accented and hyphenated names survive intact.
+    assert parsed.rows[0].nachname == "Mustermann-Müller"
+    assert parsed.rows[1].nachname == "Akzènt"
+    assert not any(row.flagged for row in parsed.rows)
