@@ -344,6 +344,22 @@ tr.row-excluded td {
   border: 1px solid var(--border);
 }
 
+/* Per-field validation (exercise max points, grading-schema percentages — see ExamDetailPage):
+   a red border on the offending input plus a short message next to it. Colour is never the only
+   signal — the input also carries aria-invalid="true" and the message is real, associated text,
+   not just a hue. Follows the same "state as a class" convention as .row-flagged/.row-excluded. */
+input.field-invalid {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.field-error {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 0.8rem;
+  color: var(--danger);
+}
+
 /* ---------------------------------------------------------------- messages */
 
 .errors,

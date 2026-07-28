@@ -3,7 +3,10 @@ import { describe, expect, it } from "vitest";
 import {
   GRADE_SCALE,
   compareDecimalStrings,
+  exercisePointsFieldError,
   fromScaled,
+  gradeFromServerMessage,
+  schemaFieldErrors,
   sumMaxPoints,
   thresholdPointsPreview,
   toScaled,
@@ -141,6 +144,13 @@ describe("validateGradingSchema (SPECIFICATION.md 7.2)", () => {
     expect(tooHigh.some((message) => message.includes("zwischen 0 und 100"))).toBe(true);
   });
 
+  it("rejects exactly 0 %, mirroring the backend's (0, 100] range (app/grading/schema.py)", () => {
+    const errors = validateGradingSchema(
+      schema(["95", "90", "85", "80", "75", "70", "65", "60", "55", "0"]),
+    );
+    expect(errors.some((message) => message.includes("zwischen 0 und 100"))).toBe(true);
+  });
+
   it("requires exactly the ten grades of 7.1 in order", () => {
     const missing = validateGradingSchema(schema(VALID_PERCENTAGES).slice(0, 9));
     expect(missing.some((message) => message.includes("zehn Noten"))).toBe(true);
@@ -170,5 +180,103 @@ describe("validateExercises", () => {
     expect(errors[0]).toContain("Bezeichnung");
     expect(errors[1]).toContain("keine gültige Punktzahl");
     expect(errors[2]).toContain("größer als 0");
+  });
+});
+
+describe("exercisePointsFieldError (Fix 2: per-field marking)", () => {
+  it("accepts a normal positive decimal", () => {
+    expect(exercisePointsFieldError("12.5")).toBeNull();
+    expect(exercisePointsFieldError("0.75")).toBeNull();
+  });
+
+  it("does not flag an empty field — a normal mid-edit state, not an error (Fix 1)", () => {
+    expect(exercisePointsFieldError("")).toBeNull();
+    expect(exercisePointsFieldError("   ")).toBeNull();
+  });
+
+  it("flags non-numeric text", () => {
+    expect(exercisePointsFieldError("abc")).toContain("keine gültige Punktzahl");
+  });
+
+  it("does not flag a value mid-keystroke ('12,' on the way to '12,5')", () => {
+    expect(exercisePointsFieldError("12,")).toBeNull();
+    expect(exercisePointsFieldError("62.")).toBeNull();
+  });
+
+  it("flags a value that is not strictly greater than 0", () => {
+    expect(exercisePointsFieldError("0")).toContain("größer als 0");
+    expect(exercisePointsFieldError("-5")).toContain("größer als 0");
+  });
+});
+
+describe("schemaFieldErrors (Fix 2: per-field marking)", () => {
+  it("flags nothing for a valid, strictly-decreasing schema", () => {
+    expect(schemaFieldErrors(schema(VALID_PERCENTAGES)).size).toBe(0);
+  });
+
+  it("marks the later (worse) grade of a decreasing violation, not the earlier one", () => {
+    // 2.7 (index 5) raised to 80, no longer lower than 2.3's 75 (index 4).
+    const percentages = ["95", "90", "85", "80", "75", "80", "65", "60", "55", "50"];
+    const errors = schemaFieldErrors(schema(percentages));
+    expect(errors.get("2.7")).toContain("2,3");
+    expect(errors.has("2.3")).toBe(false);
+  });
+
+  it("marks an individually out-of-range value (0 or 101) on its own field only", () => {
+    const zero = schemaFieldErrors(
+      schema(["95", "90", "85", "80", "75", "70", "65", "60", "55", "0"]),
+    );
+    expect(zero.get("4.0")).toContain("größer als 0");
+    expect(zero.has("3.7")).toBe(false);
+
+    const tooHigh = schemaFieldErrors(
+      schema(["101", "90", "85", "80", "75", "70", "65", "60", "55", "50"]),
+    );
+    expect(tooHigh.get("1.0")).toContain("100");
+    expect(tooHigh.has("1.3")).toBe(false);
+  });
+
+  it("marks an empty field, but only that field (no spurious pairwise message)", () => {
+    const errors = schemaFieldErrors(schema(["95", "90", "85", "80", "75", "", "65", "60", "55", "50"]));
+    expect(errors.get("2.7")).toContain("Prozentwert");
+    expect(errors.has("3.0")).toBe(false);
+  });
+
+  it("does not flag a percentage mid-keystroke ('62,' on the way to '62,5')", () => {
+    const errors = schemaFieldErrors(
+      schema(["95", "90", "85", "80", "75", "70", "65", "60", "55", "62,"]),
+    );
+    expect(errors.has("4.0")).toBe(false);
+  });
+
+  it("flags a value already invalid on its own without also adding the pairwise message", () => {
+    const errors = schemaFieldErrors(
+      schema(["95", "90", "85", "80", "75", "abc", "65", "60", "55", "50"]),
+    );
+    expect(errors.size).toBe(1);
+    expect(errors.get("2.7")).toContain("kein gültiger Prozentwert");
+  });
+});
+
+describe("gradeFromServerMessage (Fix 2: highlighting a 422's own field)", () => {
+  it("finds the single grade named in an individual-value message", () => {
+    expect(
+      gradeFromServerMessage(
+        "Prozentwert für Note 4.0 muss größer als 0 und höchstens 100 sein (aktuell: 0,00 %).",
+      ),
+    ).toBe("4.0");
+  });
+
+  it("finds the worse (second) grade named in a strictly-decreasing message", () => {
+    expect(
+      gradeFromServerMessage(
+        "Prozentwerte müssen von 1.0 bis 4.0 streng fallend sein: Note 2.3 (75,00 %) muss " +
+          "einen höheren Prozentwert haben als Note 2.7 (80,00 %).",
+      ),
+    ).toBe("2.7");
+  });
+
+  it("returns null for a message naming no grade, so the caller falls back to the summary", () => {
+    expect(gradeFromServerMessage("Der Server ist nicht erreichbar.")).toBeNull();
   });
 });

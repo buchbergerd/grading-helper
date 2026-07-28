@@ -141,7 +141,7 @@ describe("ExamDetailPage — grading preview", () => {
     });
   });
 
-  it("hides the total while an exercise value is being typed rather than guessing", async () => {
+  it("counts a cleared exercise field as 0 in the total instead of hiding it (Fix 1)", async () => {
     const user = userEvent.setup();
     renderPage();
 
@@ -150,9 +150,79 @@ describe("ExamDetailPage — grading preview", () => {
     )) as HTMLInputElement;
     await user.clear(first);
 
+    // 12.50 dropped to 0, the other two rows (0.75 + 46.75) unchanged -> 47.50.
     await waitFor(() => {
-      expect(screen.getByTestId("total-max-points").textContent).toBe("—");
+      expect(screen.getByTestId("total-max-points").textContent).toBe("47,50");
     });
+    // The threshold preview keeps updating too — it must never go blank just because a field is
+    // mid-edit.
+    expect(screen.getByTestId("threshold-1.0").textContent).not.toBe("—");
+  });
+
+  it("sums blank and filled exercise fields, blanks counting as 0 (Fix 1)", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    const first = (await screen.findByLabelText(
+      "Maximale Punkte der Aufgabe 1",
+    )) as HTMLInputElement;
+    const second = (await screen.findByLabelText(
+      "Maximale Punkte der Aufgabe 2",
+    )) as HTMLInputElement;
+    const third = (await screen.findByLabelText(
+      "Maximale Punkte der Aufgabe 3",
+    )) as HTMLInputElement;
+
+    await user.clear(first);
+    await user.type(first, "12.5");
+    await user.clear(second); // left blank on purpose
+    await user.clear(third);
+    await user.type(third, "7.25");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("total-max-points").textContent).toBe("19,75");
+    });
+  });
+
+  it("still shows a total of 0 when every exercise field is blank (Fix 1)", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    const first = (await screen.findByLabelText(
+      "Maximale Punkte der Aufgabe 1",
+    )) as HTMLInputElement;
+    const second = (await screen.findByLabelText(
+      "Maximale Punkte der Aufgabe 2",
+    )) as HTMLInputElement;
+    const third = (await screen.findByLabelText(
+      "Maximale Punkte der Aufgabe 3",
+    )) as HTMLInputElement;
+    await user.clear(first);
+    await user.clear(second);
+    await user.clear(third);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("total-max-points").textContent).toBe("0,00");
+    });
+    // The threshold preview is derived from the total and must stay visible too, not blank.
+    expect(screen.getByTestId("threshold-1.0").textContent).toBe("0,00");
+  });
+
+  it("still rejects a blank exercise field on save — the 0 shown in the total is display-only", async () => {
+    const user = userEvent.setup();
+    const mock = renderPage();
+
+    const first = (await screen.findByLabelText(
+      "Maximale Punkte der Aufgabe 1",
+    )) as HTMLInputElement;
+    await user.clear(first);
+    await user.click(screen.getByRole("button", { name: "Speichern" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("keine gültige Punktzahl");
+    // Only the initial GET happened — nothing was PATCHed, and in particular no "0" was ever
+    // submitted in place of the blank field.
+    expect(mock.mock.calls.length).toBe(1);
   });
 });
 
@@ -265,5 +335,157 @@ describe("ExamDetailPage — validation", () => {
     expect(alert.textContent).toContain("Note 3,7");
     // Only the initial GET happened — nothing was PATCHed.
     expect(mock.mock.calls.length).toBe(1);
+  });
+});
+
+describe("ExamDetailPage — Fix 2: per-field error marking", () => {
+  it("marks the later (worse) grade of a strictly-decreasing violation, not the earlier one", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    const note27 = (await screen.findByLabelText(
+      "Prozentwert für Note 2,7",
+    )) as HTMLInputElement;
+    const note23 = screen.getByLabelText("Prozentwert für Note 2,3") as HTMLInputElement;
+
+    // 2.3 stays at its original 75 %; raising 2.7 to 80 % makes it no longer strictly lower —
+    // the user's own example ("2.7 has a higher percentage than 2.3 -> mark 2.7").
+    await user.clear(note27);
+    await user.type(note27, "80");
+
+    await waitFor(() => {
+      expect(note27.getAttribute("aria-invalid")).toBe("true");
+    });
+    expect(note23.getAttribute("aria-invalid")).not.toBe("true");
+    // A real, associated message next to the field — not colour alone.
+    const describedBy = note27.getAttribute("aria-describedby");
+    expect(describedBy).not.toBeNull();
+    expect(document.getElementById(describedBy ?? "")?.textContent).toContain("2,3");
+  });
+
+  it("marks a single out-of-range percentage (0 or 101) as individually invalid", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    const note40 = (await screen.findByLabelText(
+      "Prozentwert für Note 4,0",
+    )) as HTMLInputElement;
+    await user.clear(note40);
+    await user.type(note40, "0");
+
+    await waitFor(() => {
+      expect(note40.getAttribute("aria-invalid")).toBe("true");
+    });
+
+    const note10 = screen.getByLabelText("Prozentwert für Note 1,0") as HTMLInputElement;
+    await user.clear(note10);
+    await user.type(note10, "101");
+
+    await waitFor(() => {
+      expect(note10.getAttribute("aria-invalid")).toBe("true");
+    });
+  });
+
+  it("marks a non-numeric or <= 0 exercise max-points field, but not an empty one", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    const first = (await screen.findByLabelText(
+      "Maximale Punkte der Aufgabe 1",
+    )) as HTMLInputElement;
+    await user.clear(first);
+    await user.type(first, "abc");
+    await waitFor(() => {
+      expect(first.getAttribute("aria-invalid")).toBe("true");
+    });
+    // Fix 1 still treats the unparseable field as 0 in the shown total (0.75 + 46.75 = 47.50) —
+    // the per-field red marker and the always-on total are independent, both true at once.
+    expect(screen.getByTestId("total-max-points").textContent).toBe("47,50");
+
+    await user.clear(first);
+    await user.type(first, "0");
+    await waitFor(() => {
+      expect(first.getAttribute("aria-invalid")).toBe("true");
+    });
+
+    // Empty is a normal mid-edit state (Fix 1), not an error — no red marker.
+    await user.clear(first);
+    expect(first.getAttribute("aria-invalid")).not.toBe("true");
+  });
+
+  it("does not flash a field red for an incomplete decimal separator mid-keystroke", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    const first = (await screen.findByLabelText(
+      "Maximale Punkte der Aufgabe 1",
+    )) as HTMLInputElement;
+    await user.clear(first);
+    await user.type(first, "12,"); // one keystroke away from "12,5" — not yet a valid decimal
+    expect(first.getAttribute("aria-invalid")).not.toBe("true");
+
+    const percentage = (await screen.findByLabelText(
+      "Prozentwert für Note 1,0",
+    )) as HTMLInputElement;
+    await user.clear(percentage);
+    await user.type(percentage, "62,");
+    expect(percentage.getAttribute("aria-invalid")).not.toBe("true");
+  });
+
+  it("marks the field a server 422 names ('Note 2.7') and leaves other fields alone", async () => {
+    const user = userEvent.setup();
+    const mock = installFetchMock({
+      "/api/exams/7": (_url, init) => {
+        if (init?.method === "PATCH") {
+          return jsonResponse(422, {
+            detail: {
+              errors: [
+                "Prozentwert für Note 2.7 muss größer als 0 und höchstens 100 sein " +
+                  "(aktuell: 101,00 %).",
+              ],
+            },
+          });
+        }
+        return jsonResponse(200, EXAM);
+      },
+    });
+    render(
+      <MemoryRouter initialEntries={["/klausuren/7"]}>
+        <Routes>
+          <Route path="/klausuren/:examId" element={<ExamDetailPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await screen.findByLabelText("Maximale Punkte der Aufgabe 1");
+    await user.click(screen.getByRole("button", { name: "Speichern" }));
+
+    await waitFor(() => {
+      expect(mock.mock.calls.length).toBe(2);
+    });
+
+    const note27 = (await screen.findByLabelText(
+      "Prozentwert für Note 2,7",
+    )) as HTMLInputElement;
+    await waitFor(() => {
+      expect(note27.getAttribute("aria-invalid")).toBe("true");
+    });
+    const describedBy = note27.getAttribute("aria-describedby");
+    expect(document.getElementById(describedBy ?? "")?.textContent).toContain("Note 2.7");
+
+    const note23 = screen.getByLabelText("Prozentwert für Note 2,3") as HTMLInputElement;
+    expect(note23.getAttribute("aria-invalid")).not.toBe("true");
+
+    // The summary block still shows the server message verbatim — per-field marking is additive.
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("Note 2.7");
+
+    // Editing the field drops the now-stale server verdict rather than leaving it stuck until
+    // the next save attempt; the field goes back to whatever the live check says about "70".
+    await user.clear(note27);
+    await user.type(note27, "70");
+    await waitFor(() => {
+      expect(note27.getAttribute("aria-invalid")).not.toBe("true");
+    });
   });
 });

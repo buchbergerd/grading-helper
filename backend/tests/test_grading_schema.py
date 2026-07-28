@@ -53,7 +53,10 @@ def test_threshold_points_worked_example_passing_grade() -> None:
     ("percentage", "max_points", "expected"),
     [
         # Rounds *down* to the nearest 0.5, never up.
-        (Decimal(60), Decimal(45), Decimal("27.0")),  # 27.000000000000004 as a float
+        # §7.0 cites this as "27.000000000000004 as a float". That is not true in CPython —
+        # 0.6 * 45 is exactly 27.0 — so this row does NOT distinguish Decimal from float. Kept
+        # because the spec names it; see test_grading_engine.py for a case that actually does.
+        (Decimal(60), Decimal(45), Decimal("27.0")),
         (Decimal(50), Decimal(61), Decimal("30.5")),  # 30.5 exactly on a step
         (Decimal(51), Decimal(61), Decimal("31.0")),  # 31.11 → 31.0
         (Decimal(99), Decimal(60), Decimal("59.0")),  # 59.4 → 59.0

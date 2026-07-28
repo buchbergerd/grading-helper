@@ -160,7 +160,10 @@ export function validateGradingSchema(rows: readonly SchemaRowInput[]): string[]
       );
       continue;
     }
-    if (scaled < 0n || scaled > 100n * SCALE_FACTOR) {
+    // Mirrors the backend (`app/grading/schema.py`: `if value <= 0 or value > _HUNDRED`) — a
+    // percentage of exactly 0 is rejected there, so accepting it here would let a field render
+    // as valid client-side and only fail once the server is asked.
+    if (scaled <= 0n || scaled > 100n * SCALE_FACTOR) {
       errors.push(
         `Note ${formatDecimal(row.grade)}: Der Prozentwert muss zwischen 0 und 100 liegen.`,
       );
@@ -205,4 +208,114 @@ export function validateExercises(
     }
   });
   return errors;
+}
+
+/* --------------------------------------------------------- per-field error markers (Fix 2) */
+
+/**
+ * "12," / "62." — a decimal separator was typed but no fraction digit follows it yet. This is
+ * the shape `parseDecimalInput` produces mid-keystroke while typing e.g. "12,5" (it rejects an
+ * incomplete separator on purpose — format.ts's "a separator was typed but no fraction followed
+ * — incomplete, reject"), which would otherwise fall back to the raw text here and flash the
+ * field red for one keystroke. Recognising it and treating it like "still typing" (no error, no
+ * red border) keeps the per-field marking from doing exactly what Fix 1 exists to prevent for
+ * the total: punishing the instructor for being mid-edit.
+ */
+const INCOMPLETE_ENTRY_RE = /^[+-]?\d*[.,]$/;
+
+/**
+ * Per-field message for a single exercise's max-points input, given the canonical-or-raw text
+ * the same way `validateExercises` sees it (`parseDecimalInput(text) ?? text`) — or `null` if
+ * the field is fine. An *empty* field, and a value still mid-keystroke (see
+ * `INCOMPLETE_ENTRY_RE`), are deliberately not errors here: they are normal mid-edit states
+ * (Fix 1 counts an empty one as 0 in the displayed total) and are still rejected on save by
+ * `validateExercises`. Only genuinely unparseable text or a non-positive value is flagged.
+ */
+export function exercisePointsFieldError(maxPoints: string): string | null {
+  const trimmed = maxPoints.trim();
+  if (trimmed === "" || INCOMPLETE_ENTRY_RE.test(trimmed)) return null;
+  const scaled = toScaled(maxPoints);
+  if (scaled === null) return `„${maxPoints}“ ist keine gültige Punktzahl.`;
+  if (scaled <= 0n) return "Die Punktzahl muss größer als 0 sein.";
+  return null;
+}
+
+/**
+ * Per-field messages for the ten grading-schema percentage inputs, keyed by grade, so the UI
+ * can mark the exact offending input instead of only the summary block. `rows` is expected in
+ * the same canonical-or-raw shape `validateGradingSchema` takes (`parseDecimalInput(text) ??
+ * text`), in §7.1 order.
+ *
+ * Two kinds of problems, never both on the same field:
+ *
+ *  - an individually invalid value (empty / not a number / <=0 / >100) is attached to that
+ *    grade's own field;
+ *  - a strictly-decreasing violation (§7.2) between two adjacent grades is attached to the
+ *    *worse* grade — the later, lower-quality one in the 1.0..4.0 order. This mirrors the
+ *    user's own report ("2.7 has a higher percentage entered than 2.3, then mark the 2.7
+ *    input"): reading top-down from 1.0 to 4.0, 2.7 is the row whose value broke a descent that
+ *    had held up to that point, so it is the one to fix.
+ *
+ * A grade already flagged individually invalid never also gets the pairwise message — there is
+ * nothing meaningful to compare an unparseable value against.
+ */
+export function schemaFieldErrors(rows: readonly SchemaRowInput[]): Map<string, string> {
+  const errors = new Map<string, string>();
+
+  for (const row of rows) {
+    const trimmed = row.percentage.trim();
+    if (trimmed === "") {
+      errors.set(row.grade, "Bitte einen Prozentwert angeben.");
+      continue;
+    }
+    if (INCOMPLETE_ENTRY_RE.test(trimmed)) continue; // still mid-keystroke, not an error yet
+    const scaled = toScaled(row.percentage);
+    if (scaled === null) {
+      errors.set(row.grade, `„${row.percentage}“ ist kein gültiger Prozentwert.`);
+      continue;
+    }
+    if (scaled <= 0n || scaled > 100n * SCALE_FACTOR) {
+      errors.set(row.grade, "Muss größer als 0 und höchstens 100 sein.");
+    }
+  }
+
+  for (let i = 0; i + 1 < rows.length; i += 1) {
+    const better = rows[i];
+    const worse = rows[i + 1];
+    if (better === undefined || worse === undefined) continue;
+    if (errors.has(worse.grade)) continue; // already individually invalid
+    const cmp = compareDecimalStrings(better.percentage, worse.percentage);
+    if (cmp === null) continue; // already reported as an invalid value above
+    if (cmp <= 0) {
+      errors.set(worse.grade, `Muss kleiner als bei Note ${formatDecimal(better.grade)} sein.`);
+    }
+  }
+
+  return errors;
+}
+
+/** Grade-name pattern the backend actually emits (`app/grading/schema.py`): always the dot
+ * form ("Note 2.7"), matching `GRADE_SCALE` exactly — no locale conversion needed. */
+const SERVER_GRADE_RE = /Note (\d\.\d)/g;
+
+/**
+ * Pulls the grade(s) named in a server-returned §7.2 message so a `422` can mark the same input
+ * the summary block already describes, instead of leaving the instructor to find it themselves.
+ * Not authoritative parsing of a stable contract — just best-effort text mining of the backend's
+ * existing German wording (`docs/api-contract.md`'s `{"detail": {"errors": [...]}}` shape is the
+ * actual contract; this only reads the message *text* it carries).
+ *
+ * A single-grade message ("Prozentwert für Note 4.0 muss ...") names one field. The strictly-
+ * decreasing message names two ("... Note 2.3 ... höheren Prozentwert ... als Note 2.7 ...");
+ * by the same "later, worse grade is the offender" rule as `schemaFieldErrors` above, the
+ * *last* grade mentioned is the one returned. Returns `null` if no known grade is found, so the
+ * caller can fall back to the summary block.
+ */
+export function gradeFromServerMessage(message: string): Grade | null {
+  const grades = [...message.matchAll(SERVER_GRADE_RE)]
+    .map((match) => match[1])
+    .filter(
+      (grade): grade is Grade => grade !== undefined && (GRADE_SCALE as readonly string[]).includes(grade),
+    );
+  return grades[grades.length - 1] ?? null;
 }

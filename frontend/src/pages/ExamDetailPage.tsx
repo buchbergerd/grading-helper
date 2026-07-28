@@ -15,7 +15,10 @@ import { ConfirmDialog } from "../components/ConfirmDialog";
 import { ErrorList, SuccessNotice } from "../components/Messages";
 import { BONUS_MODE_OPTIONS } from "../grading/bonusMode";
 import {
+  exercisePointsFieldError,
   GRADE_SCALE,
+  gradeFromServerMessage,
+  schemaFieldErrors,
   SCHWELLE_PREVIEW_HINT,
   sumMaxPoints,
   thresholdPointsPreview,
@@ -79,6 +82,32 @@ function toSchemaRows(schema: readonly GradingSchemaRow[]): SchemaRow[] {
   });
 }
 
+/**
+ * Canonicalises every exercise row's typed text the same way for both the save payload and the
+ * live per-field error preview, so the two never disagree about what counts as "invalid": digits
+ * are passed through unchanged ("12,50" -> "12.50"), and a value that isn't a canonical decimal
+ * (empty or garbage) falls back to the raw text verbatim, exactly as `validateExercises` expects.
+ */
+function toExercisePayload(rows: readonly ExerciseRow[]): Exercise[] {
+  return rows.map((row, index) => {
+    const canonical = parseDecimalInput(row.maxPointsText);
+    return {
+      ...(row.id === undefined ? {} : { id: row.id }),
+      name: row.name.trim(),
+      max_points: canonical ?? row.maxPointsText,
+      position: index + 1,
+    };
+  });
+}
+
+/** Same idea as `toExercisePayload`, for the schema editor's percentage fields. */
+function toSchemaPayload(rows: readonly SchemaRow[]): GradingSchemaRow[] {
+  return rows.map((row) => {
+    const canonical = parseDecimalInput(row.percentageText);
+    return { grade: row.grade, percentage: canonical ?? row.percentageText };
+  });
+}
+
 export default function ExamDetailPage(): JSX.Element {
   const params = useParams();
   const examId = parseRouteId(params["examId"]);
@@ -98,6 +127,10 @@ export default function ExamDetailPage(): JSX.Element {
   const [bonusMode, setBonusMode] = useState<BonusMode>("ALWAYS");
   const [exercises, setExercises] = useState<ExerciseRow[]>([]);
   const [schema, setSchema] = useState<SchemaRow[]>(toSchemaRows([]));
+  // Grade -> German message, populated from a 422's own text (see onSave's catch block) so a
+  // server-rejected schema marks the same input the summary block already describes. Cleared
+  // whenever the exam is (re)loaded, since a fresh load has no save attempt behind it yet.
+  const [serverGradeErrors, setServerGradeErrors] = useState<Map<string, string>>(new Map());
 
   const applyExam = useCallback((detail: ExamDetail) => {
     setExam(detail);
@@ -107,6 +140,7 @@ export default function ExamDetailPage(): JSX.Element {
     setBonusMode(detail.bonus_mode);
     setExercises(toExerciseRows(detail.exercises));
     setSchema(toSchemaRows(detail.grading_schema));
+    setServerGradeErrors(new Map());
   }, []);
 
   const reload = useCallback(async () => {
@@ -165,22 +199,39 @@ export default function ExamDetailPage(): JSX.Element {
     setSchema((rows) =>
       rows.map((row) => (row.grade === grade ? { ...row, percentageText } : row)),
     );
+    // A server marker from a previous failed save describes what was wrong with the *old*
+    // value; once the instructor touches this field again it no longer necessarily applies, and
+    // the live check below takes over immediately. Otherwise a corrected field would keep
+    // showing the stale server message until the next save attempt.
+    setServerGradeErrors((prev) => {
+      if (!prev.has(grade)) return prev;
+      const next = new Map(prev);
+      next.delete(grade);
+      return next;
+    });
   }
 
   /* --------------------------------------------------------------- preview */
 
-  // Canonical decimal strings for the rows that currently parse. Rows still being typed are
-  // dropped, which makes the total null and hides the threshold column rather than showing a
-  // total that silently ignores an exercise.
-  const parsedMaxPoints = exercises.map((row) => parseDecimalInput(row.maxPointsText));
-  const allMaxPointsValid =
-    exercises.length > 0 && parsedMaxPoints.every((value) => value !== null);
-  const totalMaxPoints = allMaxPointsValid
-    ? sumMaxPoints(parsedMaxPoints.filter((value): value is string => value !== null))
-    : null;
+  // Fix 1: an exercise field that is empty or not (yet) a valid decimal counts as 0 toward the
+  // *shown* total, so the total (and the threshold preview derived from it) is always visible
+  // while the instructor is mid-edit rather than going blank the moment one field is cleared or
+  // still being typed. This is display-only and changes nothing about what gets submitted: onSave
+  // still reads each row through parseDecimalInput, and an empty/invalid field is still rejected
+  // exactly as before by validateExercises — see exercisePayload in onSave.
+  const displayMaxPoints = exercises.map((row) => parseDecimalInput(row.maxPointsText) ?? "0.00");
+  const totalMaxPoints = exercises.length > 0 ? sumMaxPoints(displayMaxPoints) : null;
 
   // True while the schema has not been configured at all (a first exam in a lecture).
   const schemaIsEmpty = schema.every((row) => row.percentageText.trim() === "");
+
+  // Fix 2: live per-field markers, recomputed on every render from the current input text — see
+  // preview.ts's schemaFieldErrors/exercisePointsFieldError for the exact rules. A schema that
+  // has not been configured at all is a legitimate transient state (see schemaIsEmpty above,
+  // and the matching `if (!schemaIsEmpty)` gate in onSave), so it is never flagged as invalid.
+  const schemaLiveErrors = schemaIsEmpty
+    ? new Map<string, string>()
+    : schemaFieldErrors(toSchemaPayload(schema));
 
   function thresholdFor(percentageText: string): string | null {
     if (totalMaxPoints === null) return null;
@@ -195,6 +246,9 @@ export default function ExamDetailPage(): JSX.Element {
     event.preventDefault();
     if (examId === null) return;
     setSaved(false);
+    // Any server-field markers from a previous failed attempt no longer apply to this attempt —
+    // it either succeeds (cleared again below) or fails with a fresh set (repopulated below).
+    setServerGradeErrors(new Map());
 
     const problems: string[] = [];
     if (semester.trim() === "") problems.push("Bitte ein Semester angeben.");
@@ -209,24 +263,13 @@ export default function ExamDetailPage(): JSX.Element {
     }
 
     // Canonicalise every decimal: "12,5" -> "12.5". The digits are passed through unchanged,
-    // so what is typed is exactly what the backend's Decimal(str) receives.
-    const exercisePayload: Exercise[] = [];
-    exercises.forEach((row, index) => {
-      const canonical = parseDecimalInput(row.maxPointsText);
-      exercisePayload.push({
-        ...(row.id === undefined ? {} : { id: row.id }),
-        name: row.name.trim(),
-        max_points: canonical ?? row.maxPointsText,
-        // 1-based, contiguous, in the order shown in the editor.
-        position: index + 1,
-      });
-    });
+    // so what is typed is exactly what the backend's Decimal(str) receives. An empty or
+    // otherwise unparseable field falls back to the raw text and is rejected below by
+    // validateExercises — Fix 1's 0-substitution for the displayed total never reaches here.
+    const exercisePayload: Exercise[] = toExercisePayload(exercises);
     problems.push(...validateExercises(exercisePayload));
 
-    const schemaPayload: GradingSchemaRow[] = schema.map((row) => {
-      const canonical = parseDecimalInput(row.percentageText);
-      return { grade: row.grade, percentage: canonical ?? row.percentageText };
-    });
+    const schemaPayload: GradingSchemaRow[] = toSchemaPayload(schema);
     // An exam whose lecture had no prior exam starts with an entirely empty schema. Saving is
     // still allowed then — otherwise the semester, the date and the exercises could not be
     // edited before all ten percentages exist — by leaving `grading_schema` out of the PATCH
@@ -259,7 +302,17 @@ export default function ExamDetailPage(): JSX.Element {
       setMessages([]);
       setSaved(true);
     } catch (error) {
-      setMessages(errorMessages(error));
+      const serverMessages = errorMessages(error);
+      setMessages(serverMessages);
+      // Best-effort: mark the input(s) a 422's own German text names ("Note 2.7"), falling back
+      // to the summary block alone for messages that don't name a grade (e.g. a missing/unknown
+      // grade in the schema, or an unrelated error).
+      const fieldErrors = new Map<string, string>();
+      for (const message of serverMessages) {
+        const grade = gradeFromServerMessage(message);
+        if (grade !== null) fieldErrors.set(grade, message);
+      }
+      setServerGradeErrors(fieldErrors);
     } finally {
       setSaving(false);
     }
@@ -408,16 +461,32 @@ export default function ExamDetailPage(): JSX.Element {
                         valueAsNumber and normalises "12,50" — the trailing zero and the exact
                         decimal would be lost before the value ever reaches the API.
                       */}
-                      <input
-                        type="text"
-                        inputMode="decimal"
-                        className="narrow"
-                        aria-label={`Maximale Punkte der Aufgabe ${index + 1}`}
-                        value={row.maxPointsText}
-                        onChange={(event) =>
-                          updateExercise(row.key, { maxPointsText: event.target.value })
-                        }
-                      />
+                      {(() => {
+                        const canonicalOrRaw = parseDecimalInput(row.maxPointsText) ?? row.maxPointsText;
+                        const fieldError = exercisePointsFieldError(canonicalOrRaw);
+                        const errorId = `exercise-error-${row.key}`;
+                        return (
+                          <>
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              className={fieldError !== null ? "narrow field-invalid" : "narrow"}
+                              aria-label={`Maximale Punkte der Aufgabe ${index + 1}`}
+                              aria-invalid={fieldError !== null ? "true" : undefined}
+                              aria-describedby={fieldError !== null ? errorId : undefined}
+                              value={row.maxPointsText}
+                              onChange={(event) =>
+                                updateExercise(row.key, { maxPointsText: event.target.value })
+                              }
+                            />
+                            {fieldError !== null ? (
+                              <span id={errorId} className="field-error">
+                                {fieldError}
+                              </span>
+                            ) : null}
+                          </>
+                        );
+                      })()}
                     </td>
                     <td>
                       <div className="button-row">
@@ -489,6 +558,11 @@ export default function ExamDetailPage(): JSX.Element {
             <tbody>
               {schema.map((row) => {
                 const threshold = thresholdFor(row.percentageText);
+                // Server-returned markers (from the last failed save) take precedence — they
+                // describe an outcome the instructor hasn't necessarily fixed yet — falling back
+                // to the live client-side check for anything the server hasn't spoken to.
+                const fieldError = serverGradeErrors.get(row.grade) ?? schemaLiveErrors.get(row.grade) ?? null;
+                const errorId = `schema-error-${row.grade}`;
                 return (
                   <tr key={row.grade}>
                     <th scope="row">{formatDecimal(row.grade)}</th>
@@ -496,11 +570,18 @@ export default function ExamDetailPage(): JSX.Element {
                       <input
                         type="text"
                         inputMode="decimal"
-                        className="narrow"
+                        className={fieldError !== null ? "narrow field-invalid" : "narrow"}
                         aria-label={`Prozentwert für Note ${formatDecimal(row.grade)}`}
+                        aria-invalid={fieldError !== null ? "true" : undefined}
+                        aria-describedby={fieldError !== null ? errorId : undefined}
                         value={row.percentageText}
                         onChange={(event) => updateSchema(row.grade, event.target.value)}
                       />
+                      {fieldError !== null ? (
+                        <span id={errorId} className="field-error">
+                          {fieldError}
+                        </span>
+                      ) : null}
                     </td>
                     <td data-testid={`threshold-${row.grade}`}>
                       {threshold === null ? EMPTY_DISPLAY : formatDecimal(threshold)}
