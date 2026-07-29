@@ -165,9 +165,9 @@ def _full_payload() -> dict[str, Any]:
             "Gesamtpunkte",
             "90",
             [
-                _bin("0", "1", "0,0 – 1,0", 1),  # noqa: RUF001 -- EN DASH is the histogram label's data, not a typo
-                _bin("1", "2", "1,0 – 2,0", 3),  # noqa: RUF001 -- EN DASH is the histogram label's data, not a typo
-                _bin("2", "3", "2,0 – 3,0", 5),  # noqa: RUF001 -- EN DASH is the histogram label's data, not a typo
+                _bin("0", "1", "[0;1[", 1),
+                _bin("1", "2", "[1;2[", 3),
+                _bin("2", "3", "[2;3]", 5),
             ],
             max_observed="2.5",
         ),
@@ -175,13 +175,13 @@ def _full_payload() -> dict[str, Any]:
             _histogram(
                 "Aufgabe 1",
                 "10",
-                [_bin("0.0", "0.5", "0,0 – 0,5", 1), _bin("0.5", "1.0", "0,5 – 1,0", 2)],  # noqa: RUF001 -- EN DASH is the histogram label's data, not a typo
+                [_bin("0.0", "0.5", "[0;0,5[", 1), _bin("0.5", "1.0", "[0,5;1]", 2)],
                 max_observed="0.9",
             ),
             _histogram(
                 "Aufgabe 2",
                 "20",
-                [_bin("0.0", "0.5", "0,0 – 0,5", 4)],  # noqa: RUF001 -- EN DASH is the histogram label's data, not a typo
+                [_bin("0.0", "0.5", "[0;0,5]", 4)],
                 max_observed="0.3",
             ),
         ],
@@ -280,18 +280,19 @@ def test_half_graded_payload_renders() -> None:
 def test_histogram_with_a_single_bin_renders() -> None:
     data = _full_payload()
     data["total_points_histogram"] = _histogram(
-        "Gesamtpunkte", "90", [_bin("40", "41", "40,0 – 41,0", 12)], max_observed="40.5"  # noqa: RUF001 -- EN DASH is the histogram label's data, not a typo
+        "Gesamtpunkte", "90", [_bin("40", "41", "[40;41]", 12)], max_observed="40.5"
     )
 
     pdf_bytes = render_internal_report(data)
 
     assert pdf_bytes.startswith(b"%PDF")
-    assert "40,0 – 41,0" in _pdf_text(pdf_bytes)  # noqa: RUF001 -- EN DASH is the histogram label's data, not a typo
+    assert "[40;41]" in _pdf_text(pdf_bytes)
 
 
 def test_histogram_with_about_forty_bins_renders() -> None:
     bins = [
-        _bin(str(i), str(i + 1), f"{i},0 – {i + 1},0", (i * 7) % 11) for i in range(40)  # noqa: RUF001 -- EN DASH is the histogram label's data, not a typo
+        _bin(str(i), str(i + 1), f"[{i};{i + 1}{']' if i == 39 else '['}", (i * 7) % 11)
+        for i in range(40)
     ]
     data = _full_payload()
     data["total_points_histogram"] = _histogram("Gesamtpunkte", "90", bins, max_observed="39.5")
@@ -300,8 +301,8 @@ def test_histogram_with_about_forty_bins_renders() -> None:
 
     text = _pdf_text(pdf_bytes)
     assert pdf_bytes.startswith(b"%PDF")
-    assert "0,0 – 1,0" in text  # noqa: RUF001 -- EN DASH is the histogram label's data, not a typo
-    assert "39,0 – 40,0" in text  # noqa: RUF001 -- EN DASH is the histogram label's data, not a typo
+    assert "[0;1[" in text
+    assert "[39;40]" in text
 
 
 def test_histogram_with_sixty_bins_still_renders() -> None:
@@ -312,7 +313,8 @@ def test_histogram_with_sixty_bins_still_renders() -> None:
     and last (always-forced, see internal_report.typ) bin captions survive into the PDF text.
     """
     bins = [
-        _bin(str(i), str(i + 1), f"{i},0 – {i + 1},0", (i * 13) % 17) for i in range(60)  # noqa: RUF001 -- EN DASH is the histogram label's data, not a typo
+        _bin(str(i), str(i + 1), f"[{i};{i + 1}{']' if i == 59 else '['}", (i * 13) % 17)
+        for i in range(60)
     ]
     data = _full_payload()
     data["total_points_histogram"] = _histogram("Gesamtpunkte", "60", bins, max_observed="59.5")
@@ -321,8 +323,8 @@ def test_histogram_with_sixty_bins_still_renders() -> None:
 
     text = _pdf_text(pdf_bytes)
     assert pdf_bytes.startswith(b"%PDF")
-    assert "0,0 – 1,0" in text  # noqa: RUF001 -- EN DASH is the histogram label's data, not a typo
-    assert "59,0 – 60,0" in text  # noqa: RUF001 -- EN DASH is the histogram label's data, not a typo
+    assert "[0;1[" in text
+    assert "[59;60]" in text
 
 
 def test_a_histogram_with_no_bins_shows_keine_daten_not_a_crash() -> None:
@@ -350,8 +352,8 @@ def test_max_observed_exceeding_reference_max_renders() -> None:
         "Gesamtpunkte",
         "90",
         [
-            _bin("0", "1", "0,0 – 1,0", 2),  # noqa: RUF001 -- EN DASH is the histogram label's data, not a typo
-            _bin("94", "95", "94,0 – 95,0", 1),  # noqa: RUF001 -- EN DASH is the histogram label's data, not a typo
+            _bin("0", "1", "[0;1[", 2),
+            _bin("94", "95", "[94;95]", 1),
         ],
         max_observed="94.5",
     )
@@ -360,7 +362,7 @@ def test_max_observed_exceeding_reference_max_renders() -> None:
     text = _pdf_text(pdf_bytes)
 
     assert pdf_bytes.startswith(b"%PDF")
-    assert "94,0 – 95,0" in text  # noqa: RUF001 -- EN DASH is the histogram label's data, not a typo
+    assert "[94;95]" in text
     # The reference max (90) and the observed max (94.5) both appear, uncapped and unclamped.
     assert "90" in text
     # German separator (§14 #6): the payload carries the canonical "94.5", the PDF prints it

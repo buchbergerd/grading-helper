@@ -28,6 +28,7 @@ import {
   type RegistrationImportResult,
   type RegistrationOut,
 } from "../api/client";
+import { BackButton } from "../components/BackButton";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { IconEdit, IconExclude, IconInclude, IconTrash } from "../components/icons";
 import { ErrorList, SuccessNotice } from "../components/Messages";
@@ -387,19 +388,22 @@ export default function RegistrationsPage(): JSX.Element {
 
   return (
     <section>
-      <p className="breadcrumb">
-        <Link to="/">Vorlesungen</Link>
-        {exam !== null ? (
-          <>
-            {" "}
-            / <Link to={`/vorlesungen/${exam.lecture_id}`}>{exam.lecture_name}</Link> /{" "}
-            <Link to={`/klausuren/${exam.id}`}>
-              {exam.semester}, {exam.termin}
-            </Link>{" "}
-            / Anmeldungen
-          </>
-        ) : null}
-      </p>
+      <div className="breadcrumb-row">
+        <BackButton to={exam !== null ? `/klausuren/${exam.id}` : null} />
+        <p className="breadcrumb">
+          <Link to="/">Vorlesungen</Link>
+          {exam !== null ? (
+            <>
+              {" "}
+              / <Link to={`/vorlesungen/${exam.lecture_id}`}>{exam.lecture_name}</Link> /{" "}
+              <Link to={`/klausuren/${exam.id}`}>
+                {exam.semester}, {exam.termin}
+              </Link>{" "}
+              / Anmeldungen
+            </>
+          ) : null}
+        </p>
+      </div>
       <h1>Anmeldungen{exam !== null ? ` — ${exam.lecture_name}` : ""}</h1>
       <ErrorList messages={examMessages} />
 

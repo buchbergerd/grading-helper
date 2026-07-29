@@ -489,3 +489,23 @@ describe("ExamDetailPage — Fix 2: per-field error marking", () => {
     });
   });
 });
+
+describe("ExamDetailPage — back button (breadcrumb)", () => {
+  it("navigates one level up, to the parent lecture — not browser history", async () => {
+    installFetchMock({ "/api/exams/7": () => jsonResponse(200, EXAM) });
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={["/klausuren/7"]}>
+        <Routes>
+          <Route path="/klausuren/:examId" element={<ExamDetailPage />} />
+          <Route path="/vorlesungen/:lectureId" element={<p>Vorlesungsseite</p>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    const back = await screen.findByRole("link", { name: "Zurück" });
+    await user.click(back);
+
+    expect(await screen.findByText("Vorlesungsseite")).not.toBeNull();
+  });
+});

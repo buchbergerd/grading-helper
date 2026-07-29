@@ -116,9 +116,11 @@ class GradeDistribution(TypedDict):
 class HistogramBin(TypedDict):
     """One bar. Half-open ``[lower, upper)``, except the last bin of a histogram, which is closed.
 
-    ``label`` is the finished German caption — both edges with a comma decimal separator, joined
-    by an en dash, e.g. ``"12,0"`` to ``"13,0"`` — built here so the PDF and the dashboard cannot
-    label the same bar differently.
+    ``label`` is the finished German caption in explicit interval notation, e.g. ``"[12;13["`` for
+    an ordinary bin or ``"[63;64]"`` for a histogram's closed last bin — built here, once, so the
+    PDF and the dashboard cannot label the same bar differently, and so a reader can tell which
+    bin a value exactly on an edge belongs to (the half-open/closed rule above, made explicit
+    rather than left for the reader to infer from a plain "12,0 to 13,0" range).
     """
 
     lower: str
@@ -336,6 +338,30 @@ def _thresholds_or_none(exam: Exam) -> dict[str, Decimal] | None:
     if len(exam.grade_thresholds) != len(GRADES):
         return None
     return {threshold.grade: threshold.percentage for threshold in exam.grade_thresholds}
+
+
+def _display_decimal(value: Decimal) -> str:
+    """Format ``value`` at its own natural precision, German comma, for a display label.
+
+    ``Decimal.normalize()`` strips trailing zeros as a *value* — ``Decimal("4.0")`` becomes
+    ``Decimal("4")``, ``Decimal("4.5")`` stays ``Decimal("4.5")`` — which is exactly "4", not
+    "4,0". The trap it sets for a whole number like ``Decimal("100")`` is that ``normalize()``
+    can push it into scientific notation (``Decimal("1E+2")``); that only matters for ``str``/
+    ``repr``, though, not here, because :func:`~app.formatting.format_german_decimal` formats
+    with Python's ``:f`` spec, which always renders fixed-point and expands ``1E+2`` back to
+    ``"100"`` regardless of the internal exponent.
+    """
+    return format_german_decimal(value.normalize(), places=None)
+
+
+def _histogram_bin_label(lower: Decimal, upper: Decimal, *, is_last: bool) -> str:
+    """§9's histogram bin caption: explicit interval notation, e.g. ``"[4;5["`` for an ordinary
+    half-open bin or ``"[63;64]"`` for a histogram's closed last bin (:class:`HistogramBin`'s
+    docstring) — so a reader can tell which bin holds a value exactly on an edge, which a plain
+    "4,0 to 5,0" range could not say.
+    """
+    closing = "]" if is_last else "["
+    return f"[{_display_decimal(lower)};{_display_decimal(upper)}{closing}"
 
 
 def _rate(numerator: int, denominator: int) -> Rate:
@@ -610,13 +636,11 @@ def _build_histogram(
     for index in range(num_bins):
         lower = bin_width * index
         upper = bin_width * (index + 1)
-        lower_label = format_german_decimal(lower, places=1)
-        upper_label = format_german_decimal(upper, places=1)
         bins.append(
             HistogramBin(
                 lower=_canonical(lower),
                 upper=_canonical(upper),
-                label=f"{lower_label}–{upper_label}",  # noqa: RUF001 -- EN DASH is the label's data, not a typo
+                label=_histogram_bin_label(lower, upper, is_last=index == num_bins - 1),
                 count=counts[index],
             )
         )

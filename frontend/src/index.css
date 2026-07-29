@@ -117,10 +117,40 @@ a {
   align-items: baseline;
 }
 
+.breadcrumb-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+}
+
 .breadcrumb {
   font-size: 0.9rem;
   color: var(--fg-muted);
   margin-bottom: 0.75rem;
+}
+
+/* `BackButton`: a compact "one level up" link to the left of the breadcrumb. Same family as
+   `.icon-button` (row actions) but a touch smaller/muted, since it sits next to small breadcrumb
+   text rather than inside a data row. */
+.back-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  margin-bottom: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--fg-muted);
+  background: var(--bg);
+  text-decoration: none;
+  flex: none;
+}
+
+.back-button:hover {
+  background: var(--bg-soft);
+  color: var(--fg);
 }
 
 .muted {
@@ -405,12 +435,19 @@ input.field-invalid {
 
 /* ---------------------------------------------------------------- points entry grid (§8) */
 
-/* The scroll container: both the sticky header and the sticky left-column block (Matr.-Nr. +
-   Nachname) are positioned relative to *this* element's scrollport, not the page, so they stay
-   visible while scrolling a wide/long grid without the whole page needing to scroll. */
+/* Horizontal overflow only — a wide grid (many exercises) still scrolls sideways within this
+   wrapper (the sticky `col-sticky-1`/`col-sticky-2` columns below are positioned relative to
+   *this* scrollport, so keeping `overflow-x` is what lets them stay pinned during that horizontal
+   scroll). There is deliberately no `max-height`/vertical clipping any more (that was the grid's
+   old inner vertical scroll): the wrapper's height now simply follows its content, so a long grid
+   grows the page instead of scrolling inside a fixed-height box. The `thead th`'s
+   `position: sticky; top: 0` below still resolves against this wrapper (an element with
+   `overflow-x: auto` is a scroll container on both axes per the CSS Overflow spec, even with
+   `overflow-y` left unspecified) — but since the wrapper's own scrollTop never moves (it's always
+   exactly as tall as its content), the header just sits at the top of the wrapper's box and
+   scrolls away with the rest of the table, the same as any other row. */
 .points-grid-wrapper {
-  overflow: auto;
-  max-height: 75vh;
+  overflow-x: auto;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   margin: 0.5rem 0 1rem;
@@ -499,26 +536,57 @@ input.field-invalid {
 .points-grid input.cell-input {
   width: 3.75rem;
   font-variant-numeric: tabular-nums;
-  text-align: right;
+  text-align: left;
   padding: 0.15rem 0.3rem;
 }
 
-/* One radio pair per student row (§8): laid out side by side and compactly, overriding the
-   page-wide `label` rule (block, bold, margin-bottom) which is meant for form fields, not an
-   inline radio caption. */
+/* Point inputs and the Summe cell are left-aligned to match their column headings (Aufgabe 1,
+   …, Summe are left-aligned by default, like every other `th`) — everything else under
+   `.numeric-cell` (Versuch, and any future right-aligned numeric column) keeps the base
+   right-alignment below. Higher specificity than `.points-grid td.numeric-cell` so it wins
+   regardless of source order. */
+.points-grid td.numeric-cell.cell-left {
+  text-align: left;
+}
+
+/* One radio pair per student row (§8), laid out side by side and compactly. The "anwesend" /
+   "nicht anwesend" wording lives once in the column header (see `.attendance-header` /
+   `.attendance-header-labels` — "Anwesend" / "Ja" / "Nein") rather than repeated as a visible
+   label on every row; each radio still carries its own `aria-label` naming the student and the
+   state it represents, so the accessible name survives the removal of the visible text. Each
+   radio gets a fixed width matching `.attendance-header-labels span` so it lines up under "Ja"/
+   "Nein" above it. */
 .attendance-radio-group {
   display: flex;
   gap: 0.6rem;
+  justify-content: center;
   white-space: nowrap;
 }
 
-.attendance-radio-group label {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.2rem;
-  font-weight: 400;
-  font-size: 0.85rem;
+.attendance-radio-group input[type="radio"] {
+  width: 1.4rem;
   margin: 0;
+  cursor: pointer;
+}
+
+/* Two-line column header for the attendance radios: "Anwesend" on its own line, then "Ja"/"Nein"
+   positioned over their respective radio columns below. */
+.attendance-header {
+  text-align: center;
+}
+
+.attendance-header-labels {
+  display: flex;
+  gap: 0.6rem;
+  justify-content: center;
+  margin-top: 0.2rem;
+  font-weight: 400;
+  color: var(--fg-muted);
+}
+
+.attendance-header-labels span {
+  width: 1.4rem;
+  text-align: center;
 }
 
 /* The single, exam-wide bonus field above the grid (§7.3) — a fieldset for visual parity with

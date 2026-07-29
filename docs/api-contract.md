@@ -269,8 +269,10 @@ Three rules the frontend depends on — all three exist so no renderer ever comp
   is 0 (render as "—"). Never divide the counts client-side. `rates.attendance` is
   attended/registered; `rates.passing` and `rates.failure` divide by `counts.graded` (attended
   **and** complete), *not* by `attended`, or an in-progress exam understates its failure rate.
-- **Histogram bin captions arrive pre-formatted in German** (`label`, e.g. `12,0–13,0`); `lower`
-  and `upper` are there for tooltips and axis work, not for rebuilding the caption.
+- **Histogram bin captions arrive pre-formatted in German, in explicit interval notation**
+  (`label`, e.g. `[12;13[` for an ordinary bin, `[63;64]` for a histogram's closed last bin —
+  see §9's half-open/closed rule); `lower` and `upper` are there for tooltips and axis work, not
+  for rebuilding the caption.
 
 `counts` distinguishes `not_attended` (`attended = false`) from `attendance_not_recorded`
 (`attended = null`), and carries `incomplete`: students who attended but are missing at least one

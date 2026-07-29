@@ -75,7 +75,7 @@
 // Nothing beyond this may be done to a payload value here; see the header comment.
 //
 // Composite captions are NOT built this way: a histogram bin's `label` arrives already assembled
-// and already German ("12,0–13,0") precisely because composing it from two edges is the kind of
+// and already German ("[12;13[") precisely because composing it from two edges is the kind of
 // thing two renderers could do differently. Do not pass a `label` through `de`.
 #let de(value) = str(value).replace(".", ",")
 

@@ -395,6 +395,17 @@ describe("PointsEntryPage — attendance (§7.4/§8.1)", () => {
     });
   });
 
+  it("names each radio's state and student in German via aria-label — the wording moved into the column header, not deleted", async () => {
+    renderPage();
+
+    const present = await screen.findByTestId("attended-2-present");
+    const absent = screen.getByTestId("attended-2-absent");
+    // Same element reached both ways: the accessible name still exists even though no visible
+    // "anwesend"/"nicht anwesend" text sits next to the radio any more.
+    expect(screen.getByLabelText("Anwesend: Schmidt, Ben")).toBe(present);
+    expect(screen.getByLabelText("Nicht anwesend: Schmidt, Ben")).toBe(absent);
+  });
+
   it('renders attended=null as a distinct third state, not as "not attended" — neither radio checked', async () => {
     renderPage();
 

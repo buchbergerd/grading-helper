@@ -118,8 +118,8 @@ const STATS: ExamStatistics = {
     max_observed: "44.00",
     included_count: 33,
     bins: [
-      { lower: "10.0", upper: "11.0", label: "10,0–11,0", count: 1 },
-      { lower: "11.0", upper: "12.0", label: "11,0–12,0", count: 2 },
+      { lower: "10.0", upper: "11.0", label: "[10;11[", count: 1 },
+      { lower: "11.0", upper: "12.0", label: "[11;12]", count: 2 },
     ],
   },
   exercise_histograms: [
@@ -129,7 +129,7 @@ const STATS: ExamStatistics = {
       reference_max: "20.00",
       max_observed: "19.50",
       included_count: 33,
-      bins: [{ lower: "18.0", upper: "18.5", label: "18,0–18,5", count: 3 }],
+      bins: [{ lower: "18.0", upper: "18.5", label: "[18;18,5]", count: 3 }],
     },
     {
       title: "Aufgabe 2",
@@ -137,7 +137,7 @@ const STATS: ExamStatistics = {
       reference_max: "25.00",
       max_observed: "24.00",
       included_count: 33,
-      bins: [{ lower: "23.5", upper: "24.0", label: "23,5–24,0", count: 1 }],
+      bins: [{ lower: "23.5", upper: "24.0", label: "[23,5;24]", count: 1 }],
     },
   ],
   versuch_breakdown: [
@@ -320,11 +320,11 @@ describe("ExamStatisticsPage — Kennzahlen and rates", () => {
     expect(screen.getByTestId("grade-row-nicht bestanden").textContent).toContain("5");
     expect(screen.getByTestId("grade-row-n.e.").textContent).toContain("2");
 
-    expect(screen.getByTestId("total-points-histogram-row-0").textContent).toContain("10,0–11,0");
+    expect(screen.getByTestId("total-points-histogram-row-0").textContent).toContain("[10;11[");
     expect(screen.getByTestId("total-points-histogram-row-0").textContent).toContain("1");
 
-    expect(screen.getByTestId("exercise-histogram-0-row-0").textContent).toContain("18,0–18,5");
-    expect(screen.getByTestId("exercise-histogram-1-row-0").textContent).toContain("23,5–24,0");
+    expect(screen.getByTestId("exercise-histogram-0-row-0").textContent).toContain("[18;18,5]");
+    expect(screen.getByTestId("exercise-histogram-1-row-0").textContent).toContain("[23,5;24]");
 
     const versuch1 = screen.getByTestId("versuch-row-1");
     expect(versuch1.textContent).toContain("1. Versuch");
@@ -371,7 +371,7 @@ describe("ExamStatisticsPage — collapsed summary tables", () => {
       "total-points-histogram-table-details",
     ) as HTMLDetailsElement;
     expect(totalPointsDetails.open).toBe(true);
-    expect(screen.getByTestId("total-points-histogram-row-0").textContent).toContain("10,0–11,0");
+    expect(screen.getByTestId("total-points-histogram-row-0").textContent).toContain("[10;11[");
 
     const gradeDetails = screen.getByTestId("grade-distribution-table-details") as HTMLDetailsElement;
     expect(gradeDetails.open).toBe(false);

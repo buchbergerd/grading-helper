@@ -318,7 +318,7 @@ def test_quarter_point_exercise_entry_falls_in_the_expected_bin(
     hist = stats["exercise_histograms"][0]
     target = next(b for b in hist["bins"] if b["lower"] == "0.5" and b["upper"] == "1.0")
     assert target["count"] == 1
-    assert target["label"] == "0,5–1,0"  # noqa: RUF001 -- EN DASH is the label's data, not a typo
+    assert target["label"] == "[0,5;1["
 
 
 def test_exercise_histogram_default_bin_width_is_one_point(
@@ -343,7 +343,7 @@ def test_exercise_histogram_default_bin_width_is_one_point(
     # With a 1.0-wide bin, 0.75 lands in 0.0-1.0, not the narrower 0.5-1.0 bin above.
     target = next(b for b in hist["bins"] if b["lower"] == "0.0" and b["upper"] == "1.0")
     assert target["count"] == 1
-    assert target["label"] == "0,0–1,0"  # noqa: RUF001 -- EN DASH is the label's data, not a typo
+    assert target["label"] == "[0;1["
 
 
 def test_boundary_value_opens_the_next_bin_and_max_closes_the_last_bin(
@@ -379,6 +379,48 @@ def test_boundary_value_opens_the_next_bin_and_max_closes_the_last_bin(
     last_bin = hist["bins"][-1]
     assert last_bin["upper"] == "3.0"
     assert last_bin["count"] == 1
+    # The last bin is closed on both ends (this function's docstring) — the caption says so
+    # explicitly, unlike every other (half-open) bin.
+    assert last_bin["label"] == "[2,5;3]"
+
+
+def test_bin_label_uses_explicit_interval_notation_and_natural_edge_precision(
+    session: Session, instructor_user: User
+) -> None:
+    """Pins the exact caption format (:class:`~app.statistics.HistogramBin`'s docstring):
+    ``"[lower;upper["`` for an ordinary bin, ``"[lower;upper]"`` for a histogram's closed last
+    bin, and each edge at its own natural precision — a whole-number edge renders as ``"100"``,
+    not ``"100,0"``.
+
+    Uses a 120-point exercise deliberately: ``Decimal.normalize()`` (used internally to strip a
+    whole edge's trailing zero) tips a value like ``Decimal("100")`` into scientific notation
+    (``Decimal("1E+2")``) — this exercises that exact case, not just the single-digit edges every
+    other test in this file uses, so a regression to a naive ``str()``/``repr()`` of the
+    normalized value would be caught here even though it would slip past a small exam.
+    """
+    exam = _make_exam(session, instructor_user, exercises=[("Aufgabe 1", Decimal(120))])
+
+    stats = build_exam_statistics(exam)
+    bins = stats["exercise_histograms"][0]["bins"]
+
+    assert bins[0]["lower"] == "0.0"
+    assert bins[0]["upper"] == "1.0"
+    assert bins[0]["label"] == "[0;1["
+
+    assert bins[100]["lower"] == "100.0"
+    assert bins[100]["upper"] == "101.0"
+    assert bins[100]["label"] == "[100;101["
+
+    assert bins[-1]["lower"] == "119.0"
+    assert bins[-1]["upper"] == "120.0"
+    assert bins[-1]["label"] == "[119;120]"
+
+    fractional_stats = build_exam_statistics(exam, exercise_bin_width=Decimal("0.5"))
+    fractional_bins = fractional_stats["exercise_histograms"][0]["bins"]
+    fractional_bin = fractional_bins[9]  # lower = 4.5, upper = 5.0 -- not the last bin.
+    assert fractional_bin["lower"] == "4.5"
+    assert fractional_bin["upper"] == "5.0"
+    assert fractional_bin["label"] == "[4,5;5["
 
 
 # --------------------------------------------------------------------------------------------

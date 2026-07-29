@@ -800,7 +800,9 @@ export interface HistogramBin {
   lower: string;
   /** DECIMAL — string. */
   upper: string;
-  /** Finished German caption, e.g. `"12,0–13,0"`. Use as-is; do not rebuild it from the edges. */
+  /** Finished German caption in explicit interval notation, e.g. `"[12;13["` for an ordinary bin
+   * or `"[63;64]"` for a histogram's closed last bin. Use as-is; do not rebuild it from the
+   * edges. */
   label: string;
   count: number;
 }

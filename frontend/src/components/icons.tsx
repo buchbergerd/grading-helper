@@ -63,3 +63,12 @@ export function IconTrash(): JSX.Element {
     </svg>
   );
 }
+
+/** Left chevron — "Zurück" (`BackButton`, one level up in a breadcrumb). */
+export function IconBack(): JSX.Element {
+  return (
+    <svg {...commonProps}>
+      <path d="M10 3 5 8l5 5" />
+    </svg>
+  );
+}

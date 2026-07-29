@@ -23,6 +23,7 @@ import {
   type PointsGrid,
   type PointsRowWrite,
 } from "../api/client";
+import { BackButton } from "../components/BackButton";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { ErrorList, SuccessNotice } from "../components/Messages";
 import { BONUS_MODE_OPTIONS } from "../grading/bonusMode";
@@ -528,25 +529,31 @@ export default function PointsEntryPage(): JSX.Element {
 
   return (
     <section>
-      <p className="breadcrumb">
-        <Link to="/" onClick={onBreadcrumbClick}>
-          Vorlesungen
-        </Link>
-        {exam !== null ? (
-          <>
-            {" "}
-            /{" "}
-            <Link to={`/vorlesungen/${exam.lecture_id}`} onClick={onBreadcrumbClick}>
-              {exam.lecture_name}
-            </Link>{" "}
-            /{" "}
-            <Link to={`/klausuren/${exam.id}`} onClick={onBreadcrumbClick}>
-              {exam.semester}, {exam.termin}
-            </Link>{" "}
-            / Punkte
-          </>
-        ) : null}
-      </p>
+      <div className="breadcrumb-row">
+        <BackButton
+          to={exam !== null ? `/klausuren/${exam.id}` : null}
+          onClick={onBreadcrumbClick}
+        />
+        <p className="breadcrumb">
+          <Link to="/" onClick={onBreadcrumbClick}>
+            Vorlesungen
+          </Link>
+          {exam !== null ? (
+            <>
+              {" "}
+              /{" "}
+              <Link to={`/vorlesungen/${exam.lecture_id}`} onClick={onBreadcrumbClick}>
+                {exam.lecture_name}
+              </Link>{" "}
+              /{" "}
+              <Link to={`/klausuren/${exam.id}`} onClick={onBreadcrumbClick}>
+                {exam.semester}, {exam.termin}
+              </Link>{" "}
+              / Punkte
+            </>
+          ) : null}
+        </p>
+      </div>
       <h1>Punkte &amp; Anwesenheit{exam !== null ? ` — ${exam.lecture_name}` : ""}</h1>
       <ErrorList messages={examMessages} />
 
@@ -702,7 +709,13 @@ export default function PointsEntryPage(): JSX.Element {
                   Nachname / Vorname
                 </th>
                 <th scope="col">Vers.</th>
-                <th scope="col">Anwesenheit</th>
+                <th scope="col" className="attendance-header">
+                  Anwesend
+                  <span className="attendance-header-labels" aria-hidden="true">
+                    <span>Ja</span>
+                    <span>Nein</span>
+                  </span>
+                </th>
                 {grid.exercises.map((exercise) => (
                   <th scope="col" key={exercise.id} className="numeric-cell exercise-header">
                     {exercise.name}
@@ -742,33 +755,29 @@ export default function PointsEntryPage(): JSX.Element {
                     <td className="col-sticky-2">
                       {row.nachname}, {row.vorname}
                     </td>
-                    <td className="numeric-cell">{row.versuch}</td>
+                    <td className="numeric-cell cell-left">{row.versuch}</td>
                     <td>
                       <div
                         className="attendance-radio-group"
                         role="radiogroup"
                         aria-label={`Anwesenheit ${row.vorname} ${row.nachname}`}
                       >
-                        <label>
-                          <input
-                            type="radio"
-                            name={`attended-${row.registrationId}`}
-                            data-testid={`attended-${row.registrationId}-present`}
-                            checked={row.attended === true}
-                            onChange={() => updateAttended(row.registrationId, true)}
-                          />{" "}
-                          anwesend
-                        </label>
-                        <label>
-                          <input
-                            type="radio"
-                            name={`attended-${row.registrationId}`}
-                            data-testid={`attended-${row.registrationId}-absent`}
-                            checked={row.attended === false}
-                            onChange={() => updateAttended(row.registrationId, false)}
-                          />{" "}
-                          nicht anwesend
-                        </label>
+                        <input
+                          type="radio"
+                          name={`attended-${row.registrationId}`}
+                          data-testid={`attended-${row.registrationId}-present`}
+                          aria-label={`Anwesend: ${row.nachname}, ${row.vorname}`}
+                          checked={row.attended === true}
+                          onChange={() => updateAttended(row.registrationId, true)}
+                        />
+                        <input
+                          type="radio"
+                          name={`attended-${row.registrationId}`}
+                          data-testid={`attended-${row.registrationId}-absent`}
+                          aria-label={`Nicht anwesend: ${row.nachname}, ${row.vorname}`}
+                          checked={row.attended === false}
+                          onChange={() => updateAttended(row.registrationId, false)}
+                        />
                       </div>
                     </td>
                     {grid.exercises.map((exercise) => {
@@ -776,7 +785,7 @@ export default function PointsEntryPage(): JSX.Element {
                       const exceeds = cellExceedsMax(text, exercise.max_points);
                       const warnId = `overflow-${row.registrationId}-${exercise.id}`;
                       return (
-                        <td key={exercise.id} className="numeric-cell">
+                        <td key={exercise.id} className="numeric-cell cell-left">
                           {/* type="text", never type="number" (§7.0): a number input hands back
                               valueAsNumber and normalises what was typed. */}
                           <input
@@ -808,7 +817,7 @@ export default function PointsEntryPage(): JSX.Element {
                         </td>
                       );
                     })}
-                    <td className="numeric-cell" data-testid={`total-${row.registrationId}`}>
+                    <td className="numeric-cell cell-left" data-testid={`total-${row.registrationId}`}>
                       {preview.finalTotal === null ? EMPTY_DISPLAY : formatDecimal(preview.finalTotal)}
                     </td>
                     <td data-testid={`grade-${row.registrationId}`}>{preview.gradeLabel}</td>

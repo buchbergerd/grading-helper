@@ -15,6 +15,7 @@ import {
   formatRate,
   type HistogramBarDatum,
 } from "../statistics/series";
+import { BackButton } from "../components/BackButton";
 import { ErrorList } from "../components/Messages";
 import { formatDateOrDash, formatDecimalOrDash } from "../util/format";
 import { parseRouteId } from "../util/id";
@@ -101,19 +102,22 @@ export default function ExamStatisticsPage(): JSX.Element {
 
   return (
     <section>
-      <p className="breadcrumb">
-        <Link to="/">Vorlesungen</Link>
-        {exam !== null ? (
-          <>
-            {" "}
-            / <Link to={`/vorlesungen/${exam.lecture_id}`}>{exam.lecture_name}</Link> /{" "}
-            <Link to={`/klausuren/${exam.id}`}>
-              {exam.semester}, {exam.termin}
-            </Link>{" "}
-            / Statistik
-          </>
-        ) : null}
-      </p>
+      <div className="breadcrumb-row">
+        <BackButton to={exam !== null ? `/klausuren/${exam.id}` : null} />
+        <p className="breadcrumb">
+          <Link to="/">Vorlesungen</Link>
+          {exam !== null ? (
+            <>
+              {" "}
+              / <Link to={`/vorlesungen/${exam.lecture_id}`}>{exam.lecture_name}</Link> /{" "}
+              <Link to={`/klausuren/${exam.id}`}>
+                {exam.semester}, {exam.termin}
+              </Link>{" "}
+              / Statistik
+            </>
+          ) : null}
+        </p>
+      </div>
       <h1>Interner Bericht — {stats.lecture_name}</h1>
       <p className="muted small">
         {stats.semester}, {stats.termin}

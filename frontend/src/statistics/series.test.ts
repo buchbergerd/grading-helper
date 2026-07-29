@@ -38,13 +38,13 @@ describe("histogramSeries", () => {
       max_observed: "18.50",
       included_count: 12,
       bins: [
-        { lower: "0.0", upper: "0.5", label: "0,0–0,5", count: 0 },
-        { lower: "0.5", upper: "1.0", label: "0,5–1,0", count: 3 },
+        { lower: "0.0", upper: "0.5", label: "[0;0,5[", count: 0 },
+        { lower: "0.5", upper: "1.0", label: "[0,5;1]", count: 3 },
       ],
     };
     expect(histogramSeries(histogram)).toEqual([
-      { label: "0,0–0,5", count: 0 },
-      { label: "0,5–1,0", count: 3 },
+      { label: "[0;0,5[", count: 0 },
+      { label: "[0,5;1]", count: 3 },
     ]);
   });
 
@@ -52,7 +52,7 @@ describe("histogramSeries", () => {
     const bins = Array.from({ length: 40 }, (_, index) => ({
       lower: `${index}.0`,
       upper: `${index + 1}.0`,
-      label: `${index},0–${index + 1},0`,
+      label: index === 39 ? `[${index};${index + 1}]` : `[${index};${index + 1}[`,
       count: index % 3,
     }));
     const histogram: Histogram = {
@@ -65,8 +65,8 @@ describe("histogramSeries", () => {
     };
     const series = histogramSeries(histogram);
     expect(series).toHaveLength(40);
-    expect(series[0]).toEqual({ label: "0,0–1,0", count: 0 });
-    expect(series[39]).toEqual({ label: "39,0–40,0", count: 39 % 3 });
+    expect(series[0]).toEqual({ label: "[0;1[", count: 0 });
+    expect(series[39]).toEqual({ label: "[39;40]", count: 39 % 3 });
   });
 });
 

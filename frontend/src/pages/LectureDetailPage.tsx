@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { createExam, errorMessages, getLecture, type LectureDetail } from "../api/client";
+import { BackButton } from "../components/BackButton";
 import { BONUS_MODE_OPTIONS } from "../grading/bonusMode";
 import { ErrorList } from "../components/Messages";
 import { formatDateOrDash, parseDateInput } from "../util/format";
@@ -82,9 +83,12 @@ export default function LectureDetailPage(): JSX.Element {
 
   return (
     <section>
-      <p className="breadcrumb">
-        <Link to="/">Vorlesungen</Link> / {lecture?.name ?? "…"}
-      </p>
+      <div className="breadcrumb-row">
+        <BackButton to="/" />
+        <p className="breadcrumb">
+          <Link to="/">Vorlesungen</Link> / {lecture?.name ?? "…"}
+        </p>
+      </div>
       <h1>{lecture?.name ?? "Vorlesung"}</h1>
       <ErrorList messages={messages} />
 

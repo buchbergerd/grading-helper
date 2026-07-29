@@ -11,6 +11,7 @@ import {
   type Exercise,
   type GradingSchemaRow,
 } from "../api/client";
+import { BackButton } from "../components/BackButton";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { ErrorList, SuccessNotice } from "../components/Messages";
 import { BONUS_MODE_OPTIONS } from "../grading/bonusMode";
@@ -346,10 +347,13 @@ export default function ExamDetailPage(): JSX.Element {
 
   return (
     <section>
-      <p className="breadcrumb">
-        <Link to="/">Vorlesungen</Link> /{" "}
-        <Link to={`/vorlesungen/${exam.lecture_id}`}>{exam.lecture_name}</Link> / {exam.semester}
-      </p>
+      <div className="breadcrumb-row">
+        <BackButton to={`/vorlesungen/${exam.lecture_id}`} />
+        <p className="breadcrumb">
+          <Link to="/">Vorlesungen</Link> /{" "}
+          <Link to={`/vorlesungen/${exam.lecture_id}`}>{exam.lecture_name}</Link> / {exam.semester}
+        </p>
+      </div>
       <h1>
         {exam.lecture_name} — {exam.semester}, {exam.termin}
       </h1>
