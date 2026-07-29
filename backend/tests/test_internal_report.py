@@ -94,6 +94,7 @@ def _versuch(
     passed: int,
     failed: int,
     failure_rate: dict[str, Any],
+    awaiting_schema: int = 0,
 ) -> dict[str, Any]:
     return {
         "versuch": versuch,
@@ -104,6 +105,7 @@ def _versuch(
         "attendance_not_recorded": attendance_not_recorded,
         "graded": graded,
         "incomplete": incomplete,
+        "awaiting_schema": awaiting_schema,
         "passed": passed,
         "failed": failed,
         "failure_rate": failure_rate,
@@ -137,6 +139,7 @@ def _full_payload() -> dict[str, Any]:
             "attendance_not_recorded": 0,
             "graded": 33,
             "incomplete": 2,
+            "awaiting_schema": 0,
             "passed": 28,
             "failed": 5,
         },
@@ -198,6 +201,7 @@ def _empty_payload() -> dict[str, Any]:
         "attendance_not_recorded": 0,
         "graded": 0,
         "incomplete": 0,
+        "awaiting_schema": 0,
         "passed": 0,
         "failed": 0,
     }

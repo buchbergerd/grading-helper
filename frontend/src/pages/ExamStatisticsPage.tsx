@@ -173,6 +173,16 @@ export default function ExamStatisticsPage(): JSX.Element {
           />
           <KpiCard label="Bewertet" value={stats.counts.graded} testId="kpi-graded" />
           <KpiCard label="Unvollständig" value={stats.counts.incomplete} testId="kpi-incomplete" />
+          {/* Only meaningful before a grading schema exists, and always 0 afterwards — shown
+              conditionally so the common case isn't cluttered with a permanent zero, but never
+              hidden while it is non-zero, or those students would appear nowhere at all. */}
+          {stats.counts.awaiting_schema > 0 && (
+            <KpiCard
+              label="Ohne Notenschema"
+              value={stats.counts.awaiting_schema}
+              testId="kpi-awaiting-schema"
+            />
+          )}
         </div>
         <div className="kpi-grid" style={{ marginTop: "0.75rem" }}>
           <KpiCard

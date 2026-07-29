@@ -280,6 +280,7 @@ def test_counts_partition_the_registered_students(
     assert (
         counts["graded"]
         + counts["incomplete"]
+        + counts["awaiting_schema"]
         + counts["not_attended"]
         + counts["attendance_not_recorded"]
         == counts["registered"]
@@ -311,7 +312,17 @@ def test_versuch_groups_sum_to_the_exam_totals(
     assert [group["versuch"] for group in groups] == sorted(g["versuch"] for g in groups)
     assert len(groups) > 1, "fixture must exercise more than one attempt number"
 
-    for field in ("registered", "attended", "not_attended", "graded", "incomplete", "passed"):
+    for field in (
+        "registered",
+        "attended",
+        "not_attended",
+        "attendance_not_recorded",
+        "graded",
+        "incomplete",
+        "awaiting_schema",
+        "passed",
+        "failed",
+    ):
         assert sum(group[field] for group in groups) == counts[field], field
 
 
@@ -455,3 +466,130 @@ def test_an_exam_with_nothing_entered_still_reports(
     report = instructor_client.get(f"/api/exams/{exam_id}/reports/internal")
     assert report.status_code == 200, report.text
     assert report.content.startswith(b"%PDF")
+
+
+# --------------------------------------------------------------------------------------------
+# Two states the buckets have to survive, both reachable through supported workflows
+# --------------------------------------------------------------------------------------------
+
+
+def test_points_entered_before_a_grading_schema_exists(
+    instructor_client: TestClient, lecture_id: int
+) -> None:
+    """Entering points first and configuring the schema last must not lose students.
+
+    Nothing in §7 or §8 requires the schema to exist before points are entered, and the exam
+    editor lets an exam be created without one. Such a student is attended and complete, so they
+    are neither ``incomplete`` nor gradeable — ``awaiting_schema`` is their bucket, and it exists
+    so the five-way partition still holds. Before it did, they were counted nowhere at all and
+    simply vanished from the dashboard.
+    """
+    exam = create_exam(instructor_client, lecture_id, grading_schema=[])
+    exam_id = int(exam["id"])
+    first, second = (int(e["id"]) for e in exam["exercises"])
+    student = add_student(instructor_client, exam_id, "30000001")
+    put_points(
+        instructor_client,
+        int(student["id"]),
+        attended=True,
+        points={str(first): "20", str(second): "20"},
+    )
+
+    stats = instructor_client.get(f"/api/exams/{exam_id}/statistics").json()
+    counts = stats["counts"]
+
+    assert stats["grading_configured"] is False
+    assert stats["passing_threshold"] is None
+    assert counts["awaiting_schema"] == 1
+    assert counts["graded"] == 0
+    assert counts["incomplete"] == 0
+    assert (
+        counts["graded"]
+        + counts["incomplete"]
+        + counts["awaiting_schema"]
+        + counts["not_attended"]
+        + counts["attendance_not_recorded"]
+        == counts["registered"]
+    )
+    # Their points are still a fact about an exercise, so the per-exercise histograms show them.
+    assert stats["exercise_histograms"][0]["included_count"] == 1
+    # ...but there is no grade, so nothing lands in the distribution.
+    assert stats["grade_distribution"]["numeric_count"] == 0
+
+    report = instructor_client.get(f"/api/exams/{exam_id}/reports/internal")
+    assert report.status_code == 200
+    assert "Ohne Notenschema: 1" in pdf_text(report.content).replace("\n", " ")
+
+
+def test_stale_points_of_an_absent_student_are_excluded_from_exercise_histograms(
+    instructor_client: TestClient, lecture_id: int
+) -> None:
+    """§7.4: a student recorded as absent gets "n.e." and their points play no part in any grade.
+
+    This is not a hypothetical state. `docs/api-contract.md` guarantees that flipping ``attended``
+    to ``false`` **keeps** previously entered points, precisely so an instructor who mis-ticked
+    attendance need not re-transcribe the exam. Counting those points in the exercise
+    distribution would describe a student who did not sit the exam.
+
+    Contrast the attendance-not-yet-recorded student below, whose points must still count:
+    entering points before ticking attendance is an ordinary order to work in, and excluding them
+    would empty the histograms during normal grading.
+    """
+    exam = create_exam(instructor_client, lecture_id)
+    exam_id = int(exam["id"])
+    first, second = (int(e["id"]) for e in exam["exercises"])
+
+    absent = add_student(instructor_client, exam_id, "30000002")
+    put_points(
+        instructor_client,
+        int(absent["id"]),
+        attended=True,
+        points={str(first): "20", str(second): "20"},
+    )
+    # The supported "I mis-ticked attendance" path: points are resent and therefore retained.
+    put_points(
+        instructor_client,
+        int(absent["id"]),
+        attended=False,
+        points={str(first): "20", str(second): "20"},
+    )
+
+    not_yet_recorded = add_student(instructor_client, exam_id, "30000003")
+    put_points(instructor_client, int(not_yet_recorded["id"]), points={str(first): "15"})
+
+    stats = instructor_client.get(f"/api/exams/{exam_id}/statistics").json()
+
+    assert stats["counts"]["not_attended"] == 1
+    assert stats["counts"]["attendance_not_recorded"] == 1
+    # Only the not-yet-recorded student contributes to Aufgabe 1; the absent one is excluded even
+    # though their 20 points are still stored.
+    first_histogram = stats["exercise_histograms"][0]
+    assert first_histogram["included_count"] == 1
+    assert first_histogram["max_observed"] == "15"
+    # Aufgabe 2 has only the absent student's stale entry, so it has no contributors at all.
+    assert stats["exercise_histograms"][1]["included_count"] == 0
+
+
+def test_exercise_histograms_count_exactly_the_non_absent_contributors(
+    instructor_client: TestClient, populated_exam: int
+) -> None:
+    """Pins the exercise histograms' population, which is not the total histogram's.
+
+    The total-points histogram takes only ``graded`` students (a partial sum would be a fake
+    total). An exercise histogram takes every entered value from a student not recorded as absent,
+    which is strictly more — that difference is deliberate and would otherwise be untested.
+    """
+    stats = instructor_client.get(f"/api/exams/{populated_exam}/statistics").json()
+    counts = stats["counts"]
+
+    eligible = counts["graded"] + counts["incomplete"] + counts["attendance_not_recorded"]
+    for histogram in stats["exercise_histograms"]:
+        assert 0 <= histogram["included_count"] <= eligible
+        assert sum(b["count"] for b in histogram["bins"]) == histogram["included_count"]
+
+    # The fixture's incomplete student has Aufgabe 1 entered but not Aufgabe 2, so the two
+    # histograms must genuinely differ — otherwise this test would pass on a broken population.
+    assert (
+        stats["exercise_histograms"][0]["included_count"]
+        > stats["exercise_histograms"][1]["included_count"]
+    )

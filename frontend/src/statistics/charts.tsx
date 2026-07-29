@@ -31,6 +31,18 @@ import type { GradeBarDatum, HistogramBarDatum, VersuchBarDatum } from "./series
 const DEFAULT_HEIGHT = 260;
 
 const AXIS_TICK_STYLE = { fontSize: 11, fill: "var(--fg-muted)" };
+
+/**
+ * Bars are drawn at their final height immediately, with no grow-in animation.
+ *
+ * Two reasons, and the second is the one that matters. Presentationally, this dashboard is a live
+ * view that re-fetches while grading is in progress — re-animating every bar on each refresh is
+ * noise, not feedback. Structurally, an animated `Bar` renders **no** `<rect>` on its first frame
+ * and relies on `requestAnimationFrame` to fill in; jsdom never advances that, so every
+ * chart-rendering test would see zero bars and quietly assert nothing at all. Turning animation
+ * off makes what the tests see identical to what the browser paints.
+ */
+const ANIMATE = false;
 const TOOLTIP_STYLE = {
   fontSize: "0.85rem",
   border: "1px solid var(--border)",
@@ -61,7 +73,13 @@ export function HistogramChart({
         />
         <YAxis allowDecimals={false} tick={AXIS_TICK_STYLE} width={36} />
         <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={{ color: "var(--fg)" }} />
-        <Bar dataKey="count" name="Anzahl" fill="var(--accent)" radius={[3, 3, 0, 0]} />
+        <Bar
+          dataKey="count"
+          name="Anzahl"
+          fill="var(--accent)"
+          radius={[3, 3, 0, 0]}
+          isAnimationActive={ANIMATE}
+        />
       </BarChart>
     </ResponsiveContainer>
   );
@@ -97,7 +115,7 @@ export function GradeDistributionChart({
         <XAxis dataKey="label" tick={AXIS_TICK_STYLE} interval={0} />
         <YAxis allowDecimals={false} tick={AXIS_TICK_STYLE} width={36} />
         <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={{ color: "var(--fg)" }} />
-        <Bar dataKey="count" name="Anzahl" radius={[3, 3, 0, 0]}>
+        <Bar dataKey="count" name="Anzahl" radius={[3, 3, 0, 0]} isAnimationActive={ANIMATE}>
           {data.map((entry, index) => (
             <Cell key={`${entry.label}-${index}`} fill={colorForGradeKind(entry.kind)} />
           ))}
@@ -124,8 +142,20 @@ export function VersuchChart({
         <YAxis allowDecimals={false} tick={AXIS_TICK_STYLE} width={36} />
         <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={{ color: "var(--fg)" }} />
         <Legend wrapperStyle={{ fontSize: "0.8rem", color: "var(--fg-muted)" }} />
-        <Bar dataKey="passed" name="Bestanden" fill="var(--ok)" radius={[3, 3, 0, 0]} />
-        <Bar dataKey="failed" name="Nicht bestanden" fill="var(--danger)" radius={[3, 3, 0, 0]} />
+        <Bar
+          dataKey="passed"
+          name="Bestanden"
+          fill="var(--ok)"
+          radius={[3, 3, 0, 0]}
+          isAnimationActive={ANIMATE}
+        />
+        <Bar
+          dataKey="failed"
+          name="Nicht bestanden"
+          fill="var(--danger)"
+          radius={[3, 3, 0, 0]}
+          isAnimationActive={ANIMATE}
+        />
       </BarChart>
     </ResponsiveContainer>
   );

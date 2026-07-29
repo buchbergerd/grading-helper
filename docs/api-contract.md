@@ -273,7 +273,11 @@ Three rules the frontend depends on — all three exist so no renderer ever comp
 
 `counts` distinguishes `not_attended` (`attended = false`) from `attendance_not_recorded`
 (`attended = null`), and carries `incomplete`: students who attended but are missing at least one
-exercise entry. Those are **omitted from `grade_distribution` and `total_points_histogram`** — a
+exercise entry. Five buckets always partition `registered`:
+`graded + incomplete + awaiting_schema + not_attended + attendance_not_recorded`.
+`awaiting_schema` holds students who attended with every point entered but whose exam has no
+grading schema yet — entering points before configuring the schema is an ordinary order to work
+in, and they must not vanish from the counts. Those are **omitted from `grade_distribution` and `total_points_histogram`** — a
 partial sum would render as a fake "nicht bestanden" — while their entered exercise points still
 count in that exercise's own histogram. Both views must surface `incomplete` prominently so a
 half-graded distribution is never read as final. `registered` counts non-excluded registrations

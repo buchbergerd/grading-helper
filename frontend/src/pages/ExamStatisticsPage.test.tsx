@@ -15,9 +15,24 @@ import type { ExamDetail, ExamStatistics } from "../api/client";
  * module scope, not via `vi.stubGlobal`, so it survives every test's `vi.unstubAllGlobals()`.
  */
 if (typeof globalThis.ResizeObserver === "undefined") {
-  class NoopResizeObserver {
-    observe(): void {
-      // no-op: jsdom never lays out, so there is nothing to observe.
+  class SizedResizeObserver {
+    private readonly callback: ResizeObserverCallback;
+
+    constructor(callback: ResizeObserverCallback) {
+      this.callback = callback;
+    }
+
+    observe(target: Element): void {
+      // Report a fixed, non-zero box. A no-op observer would technically satisfy Recharts'
+      // mount-time requirement, but `ResponsiveContainer` would then resolve to 0x0 and render
+      // *nothing* — leaving every chart in this page permanently untested while the suite stayed
+      // green. Handing it a real size makes Recharts emit actual SVG, so a wrong `dataKey` or a
+      // series bound to a field that does not exist fails a test instead of shipping.
+      const entry = {
+        target,
+        contentRect: { width: 800, height: 400, top: 0, left: 0, bottom: 400, right: 800, x: 0, y: 0 },
+      } as unknown as ResizeObserverEntry;
+      this.callback([entry], this as unknown as ResizeObserver);
     }
     unobserve(): void {
       // no-op
@@ -26,7 +41,7 @@ if (typeof globalThis.ResizeObserver === "undefined") {
       // no-op
     }
   }
-  (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = NoopResizeObserver;
+  (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = SizedResizeObserver;
 }
 
 const EXAM: ExamDetail = {
@@ -68,6 +83,7 @@ const STATS: ExamStatistics = {
     attendance_not_recorded: 2,
     graded: 33,
     incomplete: 2,
+    awaiting_schema: 0,
     passed: 28,
     failed: 5,
   },
@@ -134,6 +150,7 @@ const STATS: ExamStatistics = {
       attendance_not_recorded: 1,
       graded: 30,
       incomplete: 1,
+      awaiting_schema: 0,
       passed: 26,
       failed: 4,
       failure_rate: { numerator: 4, denominator: 30, percent: "13.3" },
@@ -147,6 +164,7 @@ const STATS: ExamStatistics = {
       attendance_not_recorded: 1,
       graded: 3,
       incomplete: 1,
+      awaiting_schema: 0,
       passed: 2,
       failed: 1,
       failure_rate: { numerator: 1, denominator: 3, percent: "33.3" },
@@ -172,6 +190,52 @@ const STATS_NO_SCHEMA: ExamStatistics = {
     mean: null,
     median: null,
   },
+};
+
+/**
+ * The state an instructor sees before importing anyone: no registrations, no schema, no bins.
+ * Every chart must still mount and render an empty plot rather than throwing.
+ */
+const STATS_EMPTY: ExamStatistics = {
+  ...STATS,
+  max_points: "0",
+  grading_configured: false,
+  passing_threshold: null,
+  counts: {
+    registered: 0,
+    excluded: 0,
+    attended: 0,
+    not_attended: 0,
+    attendance_not_recorded: 0,
+    graded: 0,
+    incomplete: 0,
+    awaiting_schema: 0,
+    passed: 0,
+    failed: 0,
+  },
+  rates: {
+    attendance: { numerator: 0, denominator: 0, percent: null },
+    passing: { numerator: 0, denominator: 0, percent: null },
+    failure: { numerator: 0, denominator: 0, percent: null },
+  },
+  grade_distribution: {
+    numeric: STATS.grade_distribution.numeric.map((entry) => ({ ...entry, count: 0 })),
+    numeric_count: 0,
+    failed_count: 0,
+    not_attended_count: 0,
+    mean: null,
+    median: null,
+  },
+  total_points_histogram: {
+    title: "Gesamtpunkte",
+    bin_width: "1.0",
+    reference_max: "0",
+    max_observed: null,
+    included_count: 0,
+    bins: [],
+  },
+  exercise_histograms: [],
+  versuch_breakdown: [],
 };
 
 function baseRoutes(
@@ -347,5 +411,81 @@ describe("ExamStatisticsPage — PDF download", () => {
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:mock-url");
 
     clickSpy.mockRestore();
+  });
+});
+
+/*
+ * Chart rendering. Everything above asserts against the summary tables, which are deliberately
+ * independent JSX — so without these, no Recharts component in this app would ever have been
+ * executed by a test, and a wrong `dataKey` or a `Bar` bound to a nonexistent field would be
+ * invisible to `tsc`, to the suite and to `npm run build` alike. The sized `ResizeObserver` stub
+ * at the top of this file is what makes them possible: with a no-op one, `ResponsiveContainer`
+ * resolves to 0x0 and Recharts renders nothing at all while the suite stays green.
+ */
+describe("ExamStatisticsPage — charts actually render", () => {
+  async function renderCharts(): Promise<HTMLElement> {
+    const { container } = render(
+      <MemoryRouter initialEntries={["/klausuren/7/statistik"]}>
+        <Routes>
+          <Route path="/klausuren/:examId/statistik" element={<ExamStatisticsPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await screen.findByRole("heading", { name: "Kennzahlen" });
+    return container;
+  }
+
+  it("draws one bar per grade category, per histogram bin and per Versuch series", async () => {
+    installFetchMock(baseRoutes());
+    const container = await renderCharts();
+
+    // Notenverteilung + Gesamtpunkte + one per exercise + Versuch. Counted on `.recharts-wrapper`
+    // (one per chart) rather than `.recharts-surface`, of which the legend renders extra copies.
+    expect(container.querySelectorAll(".recharts-wrapper").length).toBe(
+      3 + STATS.exercise_histograms.length,
+    );
+
+    const expectedBars =
+      STATS.grade_distribution.numeric.length +
+      2 + // "nicht bestanden" and "n.e."
+      STATS.total_points_histogram.bins.length +
+      STATS.exercise_histograms.reduce((sum, histogram) => sum + histogram.bins.length, 0) +
+      STATS.versuch_breakdown.length * 2; // the passed and failed series
+    expect(container.querySelectorAll(".recharts-rectangle").length).toBe(expectedBars);
+
+    // Counting rectangles alone proves too little: Recharts emits a rect for a series bound to a
+    // field that does not exist too, just with height 0. Every value in this fixture is non-zero,
+    // so every bar must have a positive height — that is what actually pins each `dataKey` to a
+    // real field. A typo in one turns its bars flat and fails here.
+    const heights = Array.from(container.querySelectorAll(".recharts-rectangle")).map((rect) =>
+      Number(rect.getAttribute("height") ?? "0"),
+    );
+    expect(heights.filter((height) => height > 0).length).toBe(expectedBars);
+  });
+
+  it("labels the axes with the payload's own German captions, never canonical decimals", async () => {
+    installFetchMock(baseRoutes());
+    const container = await renderCharts();
+
+    const tickText = Array.from(container.querySelectorAll(".recharts-cartesian-axis-tick-value"))
+      .map((node) => node.textContent)
+      .filter((text): text is string => text !== null && text !== "");
+
+    for (const bin of STATS.total_points_histogram.bins) {
+      expect(tickText).toContain(bin.label);
+    }
+    expect(tickText).toContain("1,0");
+    expect(tickText).not.toContain("1.0");
+  });
+
+  it("renders every chart empty, without bars and without throwing, when there is no data", async () => {
+    installFetchMock(
+      baseRoutes({
+        "/api/exams/7/statistics": () => jsonResponse(200, STATS_EMPTY),
+      }),
+    );
+    const container = await renderCharts();
+
+    expect(container.querySelectorAll(".recharts-rectangle").length).toBe(0);
   });
 });

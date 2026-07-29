@@ -817,6 +817,8 @@ export interface VersuchGroup {
   attendance_not_recorded: number;
   graded: number;
   incomplete: number;
+  /** See `StatisticsCounts.awaiting_schema` — the same partition holds within each attempt. */
+  awaiting_schema: number;
   passed: number;
   failed: number;
   failure_rate: Rate;
@@ -834,6 +836,13 @@ export interface StatisticsCounts {
   graded: number;
   /** Attended but missing exercise points — left out of the grade and total-points charts. */
   incomplete: number;
+  /**
+   * Attended and complete, but no grading schema is configured, so no grade exists yet. Its own
+   * bucket so the five always partition `registered`:
+   * `graded + incomplete + awaiting_schema + not_attended + attendance_not_recorded`. Always 0
+   * once `grading_configured` is `true`.
+   */
+  awaiting_schema: number;
   passed: number;
   failed: number;
 }

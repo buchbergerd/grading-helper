@@ -215,6 +215,7 @@
   [
     #kennzahl("Bewertet:", str(data.counts.graded))
     #kennzahl("Unvollständig:", str(data.counts.incomplete))
+    #kennzahl("Ohne Notenschema:", str(data.counts.awaiting_schema))
     #kennzahl("Bestanden:", str(data.counts.passed))
     #kennzahl("Nicht bestanden:", str(data.counts.failed))
   ],

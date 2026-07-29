@@ -33,7 +33,9 @@ report nonsense: a student who attended but is missing two of five exercises has
 ``raw_total`` that would render as a fake "nicht bestanden". Such students are therefore counted
 in :attr:`StatisticsCounts.incomplete` and left out of the grade distribution and the
 total-points histogram — while their individually entered exercise points still count towards
-that exercise's own histogram, where they are a complete, well-defined fact.
+that exercise's own histogram, where they are a complete, well-defined fact. A student recorded
+as **absent** is the one exception: §7.4 makes their points irrelevant to any grade, so stale
+entries left behind by an attendance flip are excluded from the exercise histograms too.
 
 All aggregation happens in Python over decoded ``Decimal`` values. Points are stored as ``TEXT``
 (``app/types.py``), so ``ORDER BY``/``SUM()``/``MIN()`` over a points column is a *string*
@@ -173,6 +175,9 @@ class VersuchGroup(TypedDict):
     #: Attended **and** complete — the denominator of ``failure_rate``.
     graded: int
     incomplete: int
+    #: See :attr:`StatisticsCounts.awaiting_schema`. Repeated per group so the same five-bucket
+    #: partition holds within each attempt number as it does exam-wide.
+    awaiting_schema: int
     passed: int
     failed: int
     failure_rate: Rate
@@ -202,6 +207,19 @@ class StatisticsCounts(TypedDict):
     #: the total-points histogram; both views must show this count so a half-graded distribution
     #: is never mistaken for a final one.
     incomplete: int
+    #: Attended, every exercise entered, but the exam has **no** complete ten-grade schema, so no
+    #: grade exists to compute (§7.2). Nothing is missing from the *student's* data — the exam's
+    #: configuration is what is missing — which is why these are not ``incomplete``. Always 0 when
+    #: ``grading_configured`` is ``True``.
+    #:
+    #: This field exists so that the five student buckets always partition ``registered``::
+    #:
+    #:     graded + incomplete + awaiting_schema + not_attended + attendance_not_recorded
+    #:         == registered
+    #:
+    #: Without it, an instructor who enters points before configuring the schema — an ordinary
+    #: order to work in — sees students vanish from every count on the dashboard.
+    awaiting_schema: int
     passed: int
     failed: int
 
@@ -431,13 +449,21 @@ def _classify(
 
 @dataclass(frozen=True)
 class _Counts:
-    """The seven head counts every :class:`StatisticsCounts`/:class:`VersuchGroup` shares."""
+    """The head counts every :class:`StatisticsCounts`/:class:`VersuchGroup` shares.
+
+    ``graded``, ``incomplete``, ``awaiting_schema``, ``not_attended`` and
+    ``attendance_not_recorded`` are mutually exclusive and together account for every non-excluded
+    registration — see :attr:`StatisticsCounts.awaiting_schema`. ``attended`` overlaps them (it
+    spans ``graded``, ``incomplete`` and ``awaiting_schema``) and ``passed``/``failed`` subdivide
+    ``graded``; neither belongs in the partition.
+    """
 
     attended: int
     not_attended: int
     attendance_not_recorded: int
     graded: int
     incomplete: int
+    awaiting_schema: int
     passed: int
     failed: int
 
@@ -452,6 +478,7 @@ def _count(outcomes: Sequence[_Outcome]) -> _Counts:
         1 for outcome in outcomes if outcome.bucket == "attendance_not_recorded"
     )
     incomplete = sum(1 for outcome in outcomes if outcome.bucket == "incomplete")
+    awaiting_schema = sum(1 for outcome in outcomes if outcome.bucket == "unclassified")
     passed = sum(1 for outcome in outcomes if outcome.bucket == "graded" and outcome.is_passing)
     failed = sum(
         1 for outcome in outcomes if outcome.bucket == "graded" and not outcome.is_passing
@@ -462,6 +489,7 @@ def _count(outcomes: Sequence[_Outcome]) -> _Counts:
         attendance_not_recorded=attendance_not_recorded,
         graded=passed + failed,
         incomplete=incomplete,
+        awaiting_schema=awaiting_schema,
         passed=passed,
         failed=failed,
     )
@@ -621,6 +649,7 @@ def _versuch_breakdown(outcomes: Sequence[_Outcome]) -> list[VersuchGroup]:
                 attendance_not_recorded=counts.attendance_not_recorded,
                 graded=counts.graded,
                 incomplete=counts.incomplete,
+                awaiting_schema=counts.awaiting_schema,
                 passed=counts.passed,
                 failed=counts.failed,
                 failure_rate=_rate(counts.failed, counts.graded),
@@ -650,11 +679,12 @@ def build_exam_statistics(
     documented on :class:`ExamStatistics` and this module's own docstring.
 
     ``grading_configured`` is ``False`` when the exam's grading schema is absent or incomplete
-    (:func:`_thresholds_or_none`). In that case every registration that is attended and complete
-    falls into neither ``counts.graded`` nor ``counts.incomplete`` — see :class:`_Outcome`'s
-    ``"unclassified"`` bucket. This is a deliberate "invent nothing": there is no grade to compute
-    and no data missing, so no existing count is the right place for it. Only ``counts.attended``
-    (and the per-exercise histograms and attendance figures generally) still reflect them.
+    (:func:`_thresholds_or_none`). Every registration that is attended and complete then falls
+    into :attr:`StatisticsCounts.awaiting_schema` — see :class:`_Outcome`'s ``"unclassified"``
+    bucket — rather than into ``graded`` or ``incomplete``: there is no grade to compute and
+    nothing missing from the student's data, so neither of those would be true. It is a bucket of
+    its own precisely so the five buckets still partition ``counts.registered``; an instructor who
+    enters points before configuring the schema must not watch students disappear from the counts.
     """
     exercises = list(exam.exercises)  # already position-ordered (Exam.exercises' relationship).
     exercise_ids = [exercise.id for exercise in exercises]
@@ -681,6 +711,7 @@ def build_exam_statistics(
         attendance_not_recorded=overall.attendance_not_recorded,
         graded=overall.graded,
         incomplete=overall.incomplete,
+        awaiting_schema=overall.awaiting_schema,
         passed=overall.passed,
         failed=overall.failed,
     )
@@ -708,7 +739,15 @@ def build_exam_statistics(
             [
                 outcome.entered_points[exercise.id]
                 for outcome in outcomes
-                if exercise.id in outcome.entered_points
+                # Everyone whose points could still count towards a grade: graded, incomplete, and
+                # attendance-not-yet-recorded (entering points before ticking attendance is an
+                # ordinary way to work). A student recorded as **absent** is excluded even when
+                # stale points are still stored against them — §7.4 makes those points play no
+                # part in any grade, so counting them would inflate the exercise's distribution
+                # with data describing nobody who sat the exam. This state is reachable by design:
+                # `docs/api-contract.md` guarantees that flipping `attended` to false keeps
+                # previously entered points, so the instructor need not re-transcribe them.
+                if outcome.attended is not False and exercise.id in outcome.entered_points
             ],
             exercise.max_points,
             exercise_bin_width,
