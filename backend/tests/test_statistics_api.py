@@ -259,9 +259,18 @@ def test_pdf_and_json_report_the_same_numbers(
         assert f"{label}: {value}" in text.replace("\n", " ")
 
     # The bin captions are built once, in Python, precisely so both views cannot label a bar
-    # differently — so every one of them must survive into the PDF verbatim.
-    for histogram_bin in stats["total_points_histogram"]["bins"]:
-        assert histogram_bin["label"] in text
+    # differently. Since the §9 rewrite to cetz-plot charts (see internal_report.typ), a bin's
+    # `label` is drawn as an x tick of the total-points histogram, not as a table row — and with
+    # dozens of 1-point-wide bins, the template thins which tick *labels* it draws (every bar
+    # still gets drawn) so they do not collide on the page. That thinning always keeps the first
+    # and last bin's label, which is what's still meaningful to assert here without coupling this
+    # test to the template's exact thinning stride; every *other* number this test checks (rates,
+    # counts, mean/median) lives in the report's plain-text Kennzahlen/table blocks, unaffected by
+    # that chart-only trimming.
+    bins = stats["total_points_histogram"]["bins"]
+    assert len(bins) > 10, "fixture should exercise enough bins to make thinning relevant"
+    assert bins[0]["label"] in text
+    assert bins[-1]["label"] in text
 
 
 def test_counts_partition_the_registered_students(

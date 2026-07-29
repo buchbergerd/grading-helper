@@ -299,7 +299,35 @@ def test_over_max_exercise_entry_appears_in_its_own_histogram(
 def test_quarter_point_exercise_entry_falls_in_the_expected_bin(
     session: Session, instructor_user: User
 ) -> None:
-    """§7.0/§14 #4: 0.75 points is valid free-decimal entry; it must land in the 0.5-1.0 bin."""
+    """§7.0/§14 #4: 0.75 points is valid free-decimal entry; it must land in the 0.5-1.0 bin.
+
+    ``exercise_bin_width`` is passed explicitly here to exercise the narrow-bin path: the module
+    default is ``1.0`` (changed from §9's suggested ``0.5`` at the user's request — see
+    ``EXERCISE_BIN_WIDTH`` in ``app/statistics.py``), which would otherwise dump this value into a
+    single ``0.0-1.0`` bin and defeat the point of the test.
+    """
+    exam = _make_exam(session, instructor_user, exercises=[("Aufgabe 1", Decimal(10))])
+    exercise_id = exam.exercises[0].id
+    _add(
+        session,
+        exam,
+        _registration(matrikelnummer="1", attended=True, points={exercise_id: Decimal("0.75")}),
+    )
+
+    stats = build_exam_statistics(exam, exercise_bin_width=Decimal("0.5"))
+    hist = stats["exercise_histograms"][0]
+    target = next(b for b in hist["bins"] if b["lower"] == "0.5" and b["upper"] == "1.0")
+    assert target["count"] == 1
+    assert target["label"] == "0,5–1,0"  # noqa: RUF001 -- EN DASH is the label's data, not a typo
+
+
+def test_exercise_histogram_default_bin_width_is_one_point(
+    session: Session, instructor_user: User
+) -> None:
+    """The default exercise bin width is now ``1.0``, same as the total-points histogram — a
+    deliberate change from §9's suggested ``0.5`` default (user request, 2026-07-29). This test
+    must fail if a future edit reverts ``EXERCISE_BIN_WIDTH`` back to ``0.5`` without updating it.
+    """
     exam = _make_exam(session, instructor_user, exercises=[("Aufgabe 1", Decimal(10))])
     exercise_id = exam.exercises[0].id
     _add(
@@ -310,15 +338,23 @@ def test_quarter_point_exercise_entry_falls_in_the_expected_bin(
 
     stats = build_exam_statistics(exam)
     hist = stats["exercise_histograms"][0]
-    target = next(b for b in hist["bins"] if b["lower"] == "0.5" and b["upper"] == "1.0")
+
+    assert hist["bin_width"] == "1.0"
+    # With a 1.0-wide bin, 0.75 lands in 0.0-1.0, not the narrower 0.5-1.0 bin above.
+    target = next(b for b in hist["bins"] if b["lower"] == "0.0" and b["upper"] == "1.0")
     assert target["count"] == 1
-    assert target["label"] == "0,5–1,0"  # noqa: RUF001 -- EN DASH is the label's data, not a typo
+    assert target["label"] == "0,0–1,0"  # noqa: RUF001 -- EN DASH is the label's data, not a typo
 
 
 def test_boundary_value_opens_the_next_bin_and_max_closes_the_last_bin(
     session: Session, instructor_user: User
 ) -> None:
-    """A value exactly on a bin edge opens that bin; the maximum lands in the closed last bin."""
+    """A value exactly on a bin edge opens that bin; the maximum lands in the closed last bin.
+
+    Uses an explicit ``exercise_bin_width=0.5`` (the module default is now ``1.0`` — see
+    ``EXERCISE_BIN_WIDTH`` in ``app/statistics.py``) purely so the boundary sits at a sub-integer
+    value; the boundary-opening logic under test is otherwise bin-width agnostic.
+    """
     exam = _make_exam(session, instructor_user, exercises=[("Aufgabe 1", Decimal(3))])
     exercise_id = exam.exercises[0].id
     _add(
@@ -332,7 +368,7 @@ def test_boundary_value_opens_the_next_bin_and_max_closes_the_last_bin(
         ),  # the maximum
     )
 
-    stats = build_exam_statistics(exam)
+    stats = build_exam_statistics(exam, exercise_bin_width=Decimal("0.5"))
     hist = stats["exercise_histograms"][0]
 
     previous_bin = next(b for b in hist["bins"] if b["lower"] == "0.5" and b["upper"] == "1.0")

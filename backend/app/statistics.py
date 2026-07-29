@@ -128,7 +128,7 @@ class HistogramBin(TypedDict):
 
 
 class Histogram(TypedDict):
-    """A point distribution binned at a fixed width (§9: 1.0 for totals, 0.5 per exercise).
+    """A point distribution binned at a fixed width (§9: 1.0 for both totals and exercises).
 
     Bin edges start at 0 and step by ``bin_width`` up to and including the bin containing
     ``max_observed``. **The upper edge is derived from the observed maximum, not from
@@ -281,9 +281,16 @@ class ExamStatistics(TypedDict):
 #: §9's suggested default bin widths — "a sensible default, not a hard requirement — make them
 #: easy to change during implementation". Module-level constants so a future tweak is one line,
 #: and keyword arguments of :func:`build_exam_statistics` below so a caller can override them
-#: (e.g. for a very small exam) without touching this module.
+#: (e.g. for a very small exam) without touching this module. Kept as two separate constants even
+#: though both are currently ``1.0``: they are conceptually independent (a very fine-grained
+#: exercise might still warrant a narrower bin than the exam's total) and either could change
+#: again on its own.
 TOTAL_POINTS_BIN_WIDTH = Decimal("1.0")
-EXERCISE_BIN_WIDTH = Decimal("0.5")
+#: §9's literal text suggests ``0.5`` here. Changed to ``1.0`` at the user's explicit request
+#: (2026-07-29) to match the total-points histogram — §9 itself calls its bin widths "a sensible
+#: default, not a hard requirement", so this is a sanctioned deviation, not a bug. Do **not**
+#: "fix" this back to ``0.5`` to match the spec text without checking with the user first.
+EXERCISE_BIN_WIDTH = Decimal("1.0")
 
 #: Every raw decimal value in the payload (as opposed to a pre-built display ``label``) is
 #: rendered with this — Python's own canonical, dot-separated ``Decimal`` string, e.g. ``"29.5"``.

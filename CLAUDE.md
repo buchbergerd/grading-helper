@@ -46,9 +46,17 @@ an endpoint; it exists so neither side has to read the other's code.
 ## Commands (once code exists)
 
 ```
-cd backend && uv sync && uv run pytest && uv run uvicorn app.main:app --reload
+cd backend && uv sync && uv run python scripts/vendor_typst_packages.py
+cd backend && uv run pytest && uv run uvicorn app.main:app --reload
 cd frontend && npm install && npm run dev
 ```
+
+`vendor_typst_packages.py` is a **one-time setup step**, not part of every run. It downloads the
+pinned `cetz`/`cetz-plot` Typst packages (§12) into `backend/app/reports/typst_packages/`, which
+is gitignored — third-party LGPL-3.0 source, reproducible from the version+SHA-256 pins in the
+script. The §9 report tests need it; without it they fail with a message naming this command.
+The Docker image runs the same script as a build step. **Nothing downloads anything at runtime**
+(§13).
 
 ## Invariants — violate these silently and the bug won't show up until grading is wrong
 
@@ -106,14 +114,15 @@ implementing agent, not because they're exhaustive. Section references are to `S
 - **Everything user-facing is German**: UI text, PDF/Excel report content, number formatting
   (comma decimal separator, "1,3") and dates (DD.MM.YYYY). This repo's own docs/comments are in
   English — don't let that leak into generated output.
-- **No outbound network calls at runtime** (§13). For Typst this currently means the strongest
-  possible form: **no template imports an `@preview` package at all**, so there is nothing to
-  fetch and nothing to vendor. §12 named `cetz`/`cetz-plot` for charts, but §9's bars are drawn
-  with native Typst primitives behind one `bar-chart()` function in
-  `app/reports/templates/internal_report.typ` (see `docs/open-questions.md` #17 — a deliberate,
-  user-flagged deviation, not an oversight). If a later report does adopt a `@preview` package,
-  it must be vendored into the image at build time and wired up via `typst-py`'s `package_path`.
-  Same principle for anything else — this app must work fully offline once deployed.
+- **No outbound network calls at runtime** (§13). The constraint the user actually cares about is
+  that **exam data never leaves the machine** — no names or Matrikelnummern sent anywhere for
+  processing, ever. Fetching a public package *while building the image* is explicitly fine and is
+  how `cetz`/`cetz-plot` get in: `backend/scripts/vendor_typst_packages.py` (pinned versions,
+  SHA-256 verified) downloads them into `backend/app/reports/typst_packages/`, and
+  `app/reports/internal_report.py` points Typst at that tree via `package_path` so a render never
+  consults the `@preview` registry. Run it once locally after `uv sync`; the Dockerfile runs it as
+  a build step. Never move that fetch into request-handling code, and never add a runtime call
+  that carries exam data.
 - **Decimals are canonical (dot) strings in the payload; each renderer applies the German comma.**
   `formatDecimal` does it in the frontend, the `de()` helper does it in the Typst templates. That
   split exists because the same payload feeds the JSON API (where §7.0's canonical form is the

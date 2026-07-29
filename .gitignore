@@ -18,6 +18,13 @@ build/
 *.tsbuildinfo
 *.local
 
+# --- Vendored third-party Typst packages ---
+# Fetched by `backend/scripts/vendor_typst_packages.py` (pinned versions + SHA-256), run once
+# after `uv sync` and again as a Docker build step. Not committed: it is third-party LGPL-3.0
+# source in an otherwise proprietary first-party repository, and it is reproducible from the
+# pins in that script. The running app never downloads it — see §13 and the script's docstring.
+backend/app/reports/typst_packages/
+
 # --- App data & generated output ---
 # SQLite database (persistent volume in deployment; never commit real exam data)
 *.db

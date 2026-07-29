@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import copy
 import io
+import re
 from datetime import date
 from typing import Any
 
@@ -34,6 +35,7 @@ from sqlalchemy.orm import Session
 from app.models import Exam, Lecture, User
 from app.reports.internal_report import (
     TEMPLATE_PATH,
+    TYPST_PACKAGE_PATH,
     content_disposition,
     internal_report_filename,
     render_internal_report,
@@ -302,6 +304,27 @@ def test_histogram_with_about_forty_bins_renders() -> None:
     assert "39,0 – 40,0" in text  # noqa: RUF001 -- EN DASH is the histogram label's data, not a typo
 
 
+def test_histogram_with_sixty_bins_still_renders() -> None:
+    """A 1-point-wide bin histogram over a 60-point exam — §9's own example bin width.
+
+    The chart thins which tick *labels* it draws well before sixty of them would fit, but every
+    bin still gets its own bar; this only pins that the render doesn't choke, and that the first
+    and last (always-forced, see internal_report.typ) bin captions survive into the PDF text.
+    """
+    bins = [
+        _bin(str(i), str(i + 1), f"{i},0 – {i + 1},0", (i * 13) % 17) for i in range(60)  # noqa: RUF001 -- EN DASH is the histogram label's data, not a typo
+    ]
+    data = _full_payload()
+    data["total_points_histogram"] = _histogram("Gesamtpunkte", "60", bins, max_observed="59.5")
+
+    pdf_bytes = render_internal_report(data)
+
+    text = _pdf_text(pdf_bytes)
+    assert pdf_bytes.startswith(b"%PDF")
+    assert "0,0 – 1,0" in text  # noqa: RUF001 -- EN DASH is the histogram label's data, not a typo
+    assert "59,0 – 60,0" in text  # noqa: RUF001 -- EN DASH is the histogram label's data, not a typo
+
+
 def test_a_histogram_with_no_bins_shows_keine_daten_not_a_crash() -> None:
     """§9: an exercise nobody has points for yet must not divide by a zero max count."""
     data = _full_payload()
@@ -445,11 +468,24 @@ def test_lecture_name_semester_termin_and_generated_at_appear() -> None:
     assert "28.07.2026 14:00" in text
 
 
-def test_template_imports_no_package_at_all() -> None:
-    """§13: a ``@preview`` import fetches from Typst's registry over the network at render time.
+def test_template_imports_match_the_vendored_package_versions() -> None:
+    """§13: an ``@preview`` import must resolve offline, not fetch from Typst's network registry.
 
-    Comment lines are stripped first, mirroring ``test_attendance_list.py``'s equivalent check,
-    so the template's own explanatory header comment cannot be what makes this pass.
+    The template now draws its charts with ``cetz``/``cetz-plot`` (§12), so it necessarily
+    contains ``@preview`` imports — the old "no ``@preview`` at all" assertion this replaces would
+    now fail on the very thing this milestone was asked to build. What actually keeps the render
+    offline is ``app/reports/internal_report.py`` passing ``package_path=TYPST_PACKAGE_PATH`` to
+    ``typst.compile``, so Typst resolves ``@preview/...`` from that local tree instead of the
+    network — see that module's docstring.
+
+    This test pins the property that makes that resolution actually work: every ``@preview``
+    import the template names must have an exact matching version vendored on disk, **and** no
+    vendored version may go unused. Comment lines are stripped first, mirroring
+    ``test_attendance_list.py``'s equivalent check, so this file's own header comment (which
+    quotes the import lines as text) cannot be what makes it pass. This fails loudly if someone
+    bumps ``#import "@preview/cetz:x.y.z"`` without re-running
+    ``scripts/vendor_typst_packages.py``, or vendors a version the template does not actually
+    import.
     """
     code = "\n".join(
         line
@@ -457,8 +493,33 @@ def test_template_imports_no_package_at_all() -> None:
         if not line.lstrip().startswith("//")
     )
 
-    assert "@preview" not in code
-    assert "#import" not in code
+    imported = dict(re.findall(r'@preview/([a-zA-Z0-9_-]+):(\d+\.\d+\.\d+)', code))
+    assert imported, "template should import at least one @preview package (cetz/cetz-plot, §12)"
+    assert "cetz" in imported
+    assert "cetz-plot" in imported
+
+    preview_root = TYPST_PACKAGE_PATH / "preview"
+    assert preview_root.is_dir(), (
+        f"{preview_root} missing — run `uv run python scripts/vendor_typst_packages.py` "
+        "from backend/ first"
+    )
+
+    for name, version in imported.items():
+        assert (preview_root / name / version).is_dir(), (
+            f"template imports {name}:{version}, but that version is not vendored at "
+            f"{preview_root / name} — re-run scripts/vendor_typst_packages.py"
+        )
+
+    # The converse: every vendored package/version must actually be the one the template imports,
+    # so a stale or superfluous vendored version does not sit there unnoticed.
+    vendored = {
+        (package_dir.name, version_dir.name)
+        for package_dir in preview_root.iterdir()
+        if package_dir.is_dir()
+        for version_dir in package_dir.iterdir()
+        if version_dir.is_dir()
+    }
+    assert vendored == set(imported.items())
 
 
 def test_render_is_a_pure_function_of_its_data() -> None:

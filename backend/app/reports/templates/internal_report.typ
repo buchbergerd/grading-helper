@@ -13,17 +13,28 @@
 // app/statistics.py instead, or the dashboard and the PDF *will* eventually show two different
 // numbers for the same exam, which is the exact failure §9's "one module" requirement prevents.
 //
-// Deliberately NO `#import "@preview/..."` of any kind — same reasoning as attendance_list.typ:
-// those packages are fetched from Typst's package registry over the network on first use, which
-// SPECIFICATION.md §13 forbids at runtime. §12 names `cetz`/`cetz-plot` as the intended charting
-// packages, vendored at Docker build time — that is §15.6, a later milestone. Until then, every
-// bar in this report is drawn with plain Typst primitives (`rect`, `grid`, `stack`) behind the
-// one `bar-chart` function below, so swapping in cetz-plot later is a change to that one
-// function and nothing else.
+// Bars are drawn with `cetz` + `cetz-plot` (§12), vendored at build time into
+// app/reports/typst_packages/ by scripts/vendor_typst_packages.py — see
+// app/reports/internal_report.py's docstring for why importing them here stays §13-compliant
+// (the fetch happens once, at build time, on a machine with no exam data on it yet; the render
+// itself, with `package_path` set, never touches the network). The versions imported below
+// (`cetz:0.3.4`, `cetz-plot:0.1.1`) must always match exactly what is vendored — see
+// tests/test_internal_report.py's `test_template_imports_match_the_vendored_package_versions`.
+//
+// Only `bar-chart` (plus its small `versuch-chart` sibling for the grouped attempt breakdown)
+// draws bars, so swapping the charting library again later is a change to those two functions
+// and nothing else. Bar *geometry* — scaling a count to a pixel height, spacing bars, thinning
+// which x tick labels get drawn — is not a reported number and is exactly what a plotting
+// package is for; it is not covered by the "compute nothing" rule above. A histogram bin's
+// `label` is still printed verbatim from the payload as each tick's text, never rebuilt from
+// `lower`/`upper`.
 //
 // Expected `data` shape: ExamStatistics, see app/statistics.py. Every field there has a docstring
 // explaining exactly what it means and why it is shaped the way it is; read that file, not this
 // comment, for the contract.
+
+#import "@preview/cetz:0.3.4"
+#import "@preview/cetz-plot:0.1.1": plot
 
 #let data = json(bytes(sys.inputs.at("data")))
 
@@ -85,18 +96,82 @@
   )
 ]
 
-// --- Balkendiagramm ----------------------------------------------------------------------------
-// The one and only place bars get drawn (see header comment). `entries` is a list of
-// `(label, count)` pairs — the exact shape produced by mapping over a payload's `bins` or grade
-// list. Bars are horizontal: with up to ~40 bins in a total-points histogram, a horizontal layout
-// keeps every bar the same, legible height and keeps the chart's *width* fixed at the page width
-// regardless of how many bins there are — a vertical layout would instead squeeze every bar
-// thinner as bins are added, which is exactly the overflow this function must avoid. Label text
-// is a bin's `label` string, printed verbatim (already German-formatted, per the payload).
-#let bar-track-width = 8.5cm
-#let bar-row-height = 8pt
+// --- Balkendiagramme -----------------------------------------------------------------------
+// The only place bars get drawn (see header comment). Colours are the app's accent plus two
+// tones reserved for the Notenverteilung's non-numeric categories — chosen to stay distinct in
+// greyscale too (a mid red and a mid grey against the dark blue).
+#let accent = rgb("#1c4f8b")
+#let color-failed = rgb("#b0334a")
+#let color-absent = rgb("#8a8a8a")
 
-#let bar-chart(title: "", entries: (), note: none) = block(width: 100%, below: 6pt)[
+// Fixed regardless of bin count (CLAUDE.md: bar geometry is not a reported number) — this is
+// what keeps the chart's *width* constant on the page no matter how many bars it holds; cetz-plot
+// scales bar spacing to fit, rather than the old hand-drawn version's bars growing thinner as
+// more were added. Kept modest in height so a heading+chart unit (see `chart-section` below)
+// still leaves room for other content on the same page instead of forcing a near-empty page.
+#let chart-size = (15.5, 4.4)
+
+// Above this many entries, x tick labels start colliding, so only every nth one is drawn (every
+// *bar* still gets drawn — see `bar-chart` below). 12 categories (Notenverteilung, §9's own
+// count: ten grades plus "nicht bestanden" and "n.e.") must always fit whole, so this must never
+// go below 12.
+#let max-x-labels = 12
+
+// entries: array of (label, count) or (label, count, color) tuples. `color` is the fallback for
+// a plain 2-tuple; a 3-tuple's own colour wins, letting one chart mix colours per category
+// (Notenverteilung's "nicht bestanden"/"n.e." vs. the ten numeric grades).
+#let entry-color(entry, fallback) = if entry.len() > 2 { entry.at(2) } else { fallback }
+
+// A "nice" whole-number y-axis tick step for a given max count. Cosmetic axis scaling only — not
+// a reported number (CLAUDE.md: bar geometry is fine) — but a plain `auto` step can pick a
+// half-integer spacing for a small max count, which prints a fractional tick label for a series
+// that is always a whole head count. Also sidesteps a cetz-plot quirk where an `auto` y-max
+// combined with a fixed `y-tick-step` can silently drop one tick label near the origin.
+#let nice-y-step(max-count) = {
+  if max-count <= 10 { 1 }
+  else if max-count <= 20 { 2 }
+  else if max-count <= 50 { 5 }
+  else if max-count <= 100 { 10 }
+  else { calc.ceil(max-count / 10) }
+}
+
+// The last shown x tick can otherwise sit close enough to the x-axis's arrowhead/label to touch
+// it once there are many bars — nudging its content a couple of points left (via invisible
+// spacing, not a position change) keeps it legible without shrinking the plotted domain.
+#let end-nudge(body) = box[#body#h(2pt)]
+
+// Bar *positions* run 1..n, not 0..n-1, with the x domain explicitly padded a half-unit past
+// either end (`x-min: 0.5`, `x-max: n + 0.5`). school-book axis-style always crosses the two axes
+// at (0, 0) and merely *clamps* that crossing point into the plotted domain — with 0-indexed
+// positions, 0 sits inside the domain, at the first bar's own centre, so the y-axis was drawn
+// straight through (or just past) the middle of the first bar rather than at the chart's left
+// edge. That was invisible with dozens of thin bins (the offset is a tiny fraction of the total
+// width) but glaring with only two or three wide categories (the Versuch chart) — the axis
+// visibly cut through the first group. Starting positions at 1 puts the default crossing (0)
+// safely outside the domain, so clamping pins it exactly at `x-min`, i.e. the left edge, for
+// every chart, wide or narrow.
+#let first-position = 1
+
+// §14 #6 / this file's header comment: "Punkte"/"Note"/"Versuch" on the x-axis is not a reported
+// number, but it was colliding with the last tick label often enough (any histogram whose last
+// bin reaches the arrowhead) to be worth just dropping — the section heading directly above
+// every chart, plus the unit already printed in each bin's own label, make an axis title
+// redundant here. `y-label` keeps "Anzahl" since nothing else on the page states what the bars
+// count.
+#let no-x-label = none
+
+// `breakable: false`: a `block` is breakable by default, and a cetz `canvas` does not degrade
+// gracefully when Typst tries to split one mid-drawing across a page boundary — the axis
+// arrowhead and label can end up sliced off entirely rather than the chart simply moving to the
+// next page. Forcing the whole title+chart+note unit to move together is what makes the "page-
+// break sensibly" requirement hold for a chart that doesn't fit in the remaining space. The
+// *heading* above a chart is bundled into this same non-breakable unit by `chart-section` below,
+// not by this function — a heading is never orphaned from the chart it names.
+#let bar-chart(title: "", entries: (), note: none, color: accent) = block(
+  width: 100%,
+  below: 6pt,
+  breakable: false,
+)[
   #if title != "" [
     #text(weight: "bold", size: 10pt)[#title]
     #v(3pt)
@@ -105,43 +180,131 @@
   #if not has-data [
     #emph[keine Daten]
   ] else {
-    let max-count = calc.max(..entries.map(e => e.at(1)))
-    grid(
-      columns: (3.8cm, bar-track-width, auto),
-      column-gutter: 5pt,
-      row-gutter: 2.5pt,
-      align: (right + horizon, left + horizon, left + horizon),
-      ..entries
-        .map(((label, count)) => {
-          let filled = if max-count == 0 { 0pt } else {
-            (count / max-count) * bar-track-width
+    let n = entries.len()
+    let last = n - 1
+    let step = calc.max(1, calc.ceil(n / max-x-labels))
+    let tick-indices = range(0, n).filter(i => calc.rem(i, step) == 0)
+    // The last bin's label is always forced in (tests rely on it, and an instructor should
+    // always be able to read the top of the range) — but if `step` doesn't divide evenly, the
+    // naive append can land it closer than `step` to the previous shown tick, close enough for
+    // the two labels to overlap. Swap out that previous tick instead of stacking both.
+    if last not in tick-indices {
+      if tick-indices.len() > 0 and (last - tick-indices.last()) < step {
+        tick-indices = tick-indices.slice(0, tick-indices.len() - 1) + (last,)
+      } else {
+        tick-indices = tick-indices + (last,)
+      }
+    }
+    let x-ticks = tick-indices.map(i => {
+      let label-content = text(size: 6.5pt)[#entries.at(i).at(0)]
+      let content = if i == last { end-nudge(label-content) } else { label-content }
+      (i + first-position, content)
+    })
+
+    // add-bar applies one uniform style per call, so mixed colours mean one call per contiguous
+    // run of the same colour rather than one call for the whole series — the runs are always
+    // contiguous in every payload this template renders (all-numeric, then "nicht bestanden",
+    // then "n.e."), so this never fragments a single-colour series into more than one call.
+    let groups = ()
+    let current-color = none
+    let current-list = ()
+    for (i, e) in entries.enumerate() {
+      let c = entry-color(e, color)
+      if current-color == none {
+        current-color = c
+      } else if c != current-color {
+        groups.push((current-color, current-list))
+        current-color = c
+        current-list = ()
+      }
+      current-list.push((i + first-position, e.at(1)))
+    }
+    groups.push((current-color, current-list))
+    let max-count = calc.max(1, ..entries.map(e => e.at(1)))
+
+    cetz.canvas({
+      import cetz.draw: *
+      // Draw the y-axis's own "0" in its normal spot instead of the combined origin glyph
+      // school-book style draws by default — that combined glyph sits exactly where the first x
+      // tick's label would also be centred, so with more than a handful of bars it collided with
+      // whatever the first bar's label was.
+      set-style(axes: (shared-zero: false))
+      plot.plot(
+        size: chart-size,
+        x-tick-step: none,
+        x-ticks: x-ticks,
+        x-min: first-position - 0.5,
+        x-max: first-position + n - 1 + 0.5,
+        x-label: no-x-label,
+        y-label: "Anzahl",
+        y-min: 0,
+        y-tick-step: nice-y-step(max-count),
+        y-decimals: 0,
+        axis-style: "school-book",
+        {
+          for (bar-color, pairs) in groups {
+            plot.add-bar(pairs, bar-width: 0.85, style: (fill: bar-color, stroke: none))
           }
-          // A non-zero count that would round to an invisible sliver still gets a visible tick —
-          // "0 bars drawn" must never be confused with "0 counted", which the number to the right
-          // of the bar already disambiguates, but a visible tick makes the chart itself honest too.
-          let filled = if count > 0 and filled < 1.5pt { 1.5pt } else { filled }
-          (
-            text(size: 7.5pt)[#label],
-            stack(
-              dir: ltr,
-              rect(width: filled, height: bar-row-height, fill: luma(60), stroke: none),
-              rect(
-                width: bar-track-width - filled,
-                height: bar-row-height,
-                fill: luma(232),
-                stroke: none,
-              ),
-            ),
-            text(size: 7.5pt)[#count],
-          )
-        })
-        .flatten(),
-    )
+        },
+      )
+    })
   }
   #if note != none [
     #v(4pt)
     #text(size: 8pt, style: "italic")[#note]
   ]
+]
+
+// The one grouped chart: bestanden/nicht bestanden counts side by side per Versuch. Two plain
+// `add-bar` calls at x-offsets `±0.22` around each attempt's integer position stand in for
+// cetz-plot's "clustered" mode, which applies one style to the whole call and so cannot give the
+// two bars of a cluster different colours on its own.
+#let versuch-chart(groups) = block(width: 100%, below: 6pt, breakable: false)[
+  #if groups.len() == 0 [
+    #emph[keine Daten]
+  ] else {
+    let n = groups.len()
+    let last = n - 1
+    // Positions 1..n, same reasoning as `bar-chart` above: keeps the default (0, 0) axis
+    // crossing clamped to the left edge instead of straddling the first group, which was
+    // dramatic here with only two or three wide categories.
+    let passed-data = groups.enumerate().map(((i, g)) => (i + first-position - 0.22, g.passed))
+    let failed-data = groups.enumerate().map(((i, g)) => (i + first-position + 0.22, g.failed))
+    let x-ticks = groups.enumerate().map(((i, g)) => {
+      let label-content = text(size: 7pt)[#g.label]
+      let content = if i == last { end-nudge(label-content) } else { label-content }
+      (i + first-position, content)
+    })
+    let max-count = calc.max(1, ..groups.map(g => calc.max(g.passed, g.failed)))
+
+    cetz.canvas({
+      import cetz.draw: *
+      set-style(axes: (shared-zero: false))
+      plot.plot(
+        size: chart-size,
+        x-tick-step: none,
+        x-ticks: x-ticks,
+        x-min: first-position - 0.5,
+        x-max: first-position + n - 1 + 0.5,
+        x-label: no-x-label,
+        y-label: "Anzahl",
+        y-min: 0,
+        y-tick-step: nice-y-step(max-count),
+        y-decimals: 0,
+        axis-style: "school-book",
+        {
+          plot.add-bar(passed-data, bar-width: 0.4, style: (fill: accent, stroke: none))
+          plot.add-bar(failed-data, bar-width: 0.4, style: (fill: color-failed, stroke: none))
+        },
+      )
+    })
+    v(2pt)
+    text(size: 8pt)[
+      #box(width: 8pt, height: 8pt, fill: accent) Bestanden
+      #h(10pt)
+      #box(width: 8pt, height: 8pt, fill: color-failed) Nicht bestanden
+    ]
+  }
 ]
 
 // --- Kopfblock ----------------------------------------------------------------------------------
@@ -226,7 +389,28 @@
 #kennzahl("Durchfallquote:", rate-text(data.rates.failure))
 
 // --- Notenverteilung -----------------------------------------------------------------------------
-= Notenverteilung
+// The chart sits directly under its own heading, in one non-breakable unit (`block(breakable:
+// false)` wrapping both the heading and the `bar-chart` call) — a reader landing on whatever page
+// the chart ends up on must always see its caption too, never a bare chart. The table and
+// mean/median move *after* the chart rather than before it: with the table first (as in the old
+// horizontal-bar layout), the chart was the only thing left to push to a fresh page once the
+// table had already used up the remaining space on the previous one, which orphaned it from the
+// heading and wasted most of that page. Chart-first packs the flexible, breakable table into
+// whatever room is left instead.
+#block(breakable: false)[
+  = Notenverteilung
+
+  // No `title:` here — the heading above already names this chart; repeating it as the
+  // bar-chart's own title would just print the same word twice in a row. Colours: the ten
+  // numeric grades in the app accent, "nicht bestanden" in red, "n.e." in grey — built as
+  // 3-tuples so `bar-chart` colours each contiguous run on its own.
+  #let grade-chart-entries = data.grade_distribution.numeric.map(g => (de(g.grade), g.count, accent))
+  #let grade-chart-entries = grade-chart-entries + (
+    ("nicht bestanden", data.grade_distribution.failed_count, color-failed),
+    ("n.e.", data.grade_distribution.not_attended_count, color-absent),
+  )
+  #bar-chart(entries: grade-chart-entries)
+]
 
 // Grade labels are decimals too ("1.3" → "1,3", per §14 #6's "1,3" example). The two text
 // categories below are deliberately *not* passed through `de`: "n.e." contains a period that is
@@ -256,50 +440,63 @@
   [Median (über #str(numeric-count) Studierende mit Note):],
   if data.grade_distribution.median == none { em-dash } else { de(data.grade_distribution.median) },
 )
-#v(4pt)
-// No `title:` here — the "Notenverteilung" heading directly above already names this chart;
-// repeating it as the bar-chart's own title would just print the same word twice in a row.
-#bar-chart(entries: grade-rows.map(((grade, count)) => (grade, int(count))))
 
 // --- Histogramm der Gesamtpunkte -----------------------------------------------------------------
-= Histogramm der Gesamtpunkte
-
 #let total-hist = data.total_points_histogram
-#bar-chart(
-  title: total-hist.title,
-  entries: total-hist.bins.map(b => (b.label, b.count)),
+#block(breakable: false)[
+  = Histogramm der Gesamtpunkte
+  #bar-chart(
+    title: total-hist.title,
+    entries: total-hist.bins.map(b => (b.label, b.count)),
+    note: [
+      Bezugsgröße (max. Punktzahl): #de(total-hist.reference_max) ·
+      höchster erfasster Wert: #if total-hist.max_observed == none { em-dash } else {
+        de(total-hist.max_observed)
+      } ·
+      berücksichtigte Studierende: #str(total-hist.included_count)
+    ],
+  )
+]
+
+// --- Histogramme je Aufgabe ------------------------------------------------------------------
+// One `bar-chart` per exercise, each already bundling its own "Aufgabe N" title with its chart
+// (see `bar-chart`'s own `breakable: false`). Only the *first* exercise's chart is additionally
+// bundled with the section heading itself — a second or third exercise never needs the heading
+// repeated, so nothing beyond the first would gain from being tied to it, and tying all of them
+// into one giant non-breakable unit would just force a single all-or-nothing block that is far
+// more likely to overflow a page than to ever help.
+#let exercise-chart(hist) = bar-chart(
+  title: hist.title,
+  entries: hist.bins.map(b => (b.label, b.count)),
   note: [
-    Bezugsgröße (max. Punktzahl): #de(total-hist.reference_max) ·
-    höchster erfasster Wert: #if total-hist.max_observed == none { em-dash } else {
-      de(total-hist.max_observed)
+    Bezugsgröße (max. Punktzahl): #de(hist.reference_max) ·
+    höchster erfasster Wert: #if hist.max_observed == none { em-dash } else {
+      de(hist.max_observed)
     } ·
-    berücksichtigte Studierende: #str(total-hist.included_count)
+    berücksichtigte Studierende: #str(hist.included_count)
   ],
 )
 
-// --- Histogramme je Aufgabe ------------------------------------------------------------------
-= Histogramme je Aufgabe
-
-#if data.exercise_histograms.len() == 0 [
-  #emph[Für diese Prüfung sind keine Aufgaben konfiguriert.]
-] else {
-  for hist in data.exercise_histograms [
-    #bar-chart(
-      title: hist.title,
-      entries: hist.bins.map(b => (b.label, b.count)),
-      note: [
-        Bezugsgröße (max. Punktzahl): #de(hist.reference_max) ·
-        höchster erfasster Wert: #if hist.max_observed == none { em-dash } else {
-          de(hist.max_observed)
-        } ·
-        berücksichtigte Studierende: #str(hist.included_count)
-      ],
-    )
+#block(breakable: false)[
+  = Histogramme je Aufgabe
+  #if data.exercise_histograms.len() == 0 [
+    #emph[Für diese Prüfung sind keine Aufgaben konfiguriert.]
+  ] else [
+    #exercise-chart(data.exercise_histograms.at(0))
   ]
-}
+]
+#if data.exercise_histograms.len() > 1 [
+  #for hist in data.exercise_histograms.slice(1) [
+    #exercise-chart(hist)
+  ]
+]
 
 // --- Bestehensquote nach Versuch ---------------------------------------------------------------
-= Bestehensquote nach Versuch
+// Chart directly under the heading (see the Notenverteilung comment above for why), table after.
+#block(breakable: false)[
+  = Bestehensquote nach Versuch
+  #versuch-chart(data.versuch_breakdown)
+]
 
 #table(
   columns: (auto, auto, auto, auto, auto, 1fr),
@@ -326,7 +523,3 @@
     ))
     .flatten(),
 )
-#if data.versuch_breakdown.len() == 0 [
-  #v(6pt)
-  #emph[Keine Daten.]
-]

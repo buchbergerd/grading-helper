@@ -13,6 +13,7 @@ guarantee look intact.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -23,8 +24,8 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.collation import german_sort_key
-from app.models import Exam, Lecture, StudentRegistration, User
-from tests.conftest import INSTRUCTOR_PASSWORD, LoginHelper
+from app.models import Exam, Exercise, ExercisePoints, Lecture, StudentRegistration, User
+from tests.conftest import ADMIN_PASSWORD, INSTRUCTOR_PASSWORD, LoginHelper
 
 TEST_DATA_DIR = Path(__file__).resolve().parents[2] / "test_data"
 
@@ -97,6 +98,13 @@ def other_api(login: LoginHelper, other_instructor: User) -> TestClient:
 
 
 @pytest.fixture
+def admin_api(login: LoginHelper, admin_user: User) -> TestClient:
+    """§3: an admin, who by default sees no exam data — must get ``404`` here too."""
+    client, _ = login(admin_user.username, ADMIN_PASSWORD)
+    return client
+
+
+@pytest.fixture
 def fresh_session(session_factory: sessionmaker[Session]) -> Iterator[Session]:
     """A session independent of the request's, for "what is *really* in the database" checks."""
     with session_factory() as db:
@@ -136,6 +144,25 @@ def _rows(db: Session, exam_id: int) -> list[StudentRegistration]:
         db.execute(select(StudentRegistration).where(StudentRegistration.exam_id == exam_id))
         .scalars()
         .all()
+    )
+
+
+def _count_exercise_points_for(db: Session, registration_ids: list[int]) -> int:
+    """How many ``ExercisePoints`` rows still exist for these specific registration ids.
+
+    Deliberately **not** joined through ``StudentRegistration``: once a registration is deleted,
+    such a join would find zero rows regardless of whether the cascade actually removed the
+    ``ExercisePoints`` children or merely left them orphaned — which would hide exactly the bug
+    this check exists to catch. Filtering by the ids captured *before* deletion catches both.
+    """
+    if not registration_ids:
+        return 0
+    return int(
+        db.execute(
+            select(func.count())
+            .select_from(ExercisePoints)
+            .where(ExercisePoints.registration_id.in_(registration_ids))
+        ).scalar_one()
     )
 
 
@@ -731,6 +758,146 @@ def test_head_count_of_an_empty_exam(api: TestClient, instructor_exam: Exam) -> 
         "total": 0,
         "per_course": [],
     }
+
+
+# --------------------------------------------------------------------------------------------
+# Delete all (§5.3 — "Alle entfernen", a reset of the import, distinct from ``excluded``)
+# --------------------------------------------------------------------------------------------
+
+
+def _add_exercise_points(
+    session: Session, exam: Exam, registration: StudentRegistration
+) -> Exercise:
+    """One exercise with one entered point value for ``registration``, committed directly via
+    the ORM — this file's usual way of setting up state a PDF import cannot produce.
+    """
+    exercise = Exercise(exam_id=exam.id, name="Aufgabe 1", max_points=Decimal(10), position=1)
+    session.add(exercise)
+    session.flush()
+    session.add(
+        ExercisePoints(
+            registration_id=registration.id, exercise_id=exercise.id, points=Decimal("5.0")
+        )
+    )
+    session.commit()
+    return exercise
+
+
+def test_delete_all_removes_every_registration_and_their_points(
+    api: TestClient, instructor_exam: Exam, fresh_session: Session
+) -> None:
+    """Happy path: ``204``, every registration gone, and their ``ExercisePoints`` cascade too."""
+    assert _import(api, instructor_exam.id, MULTIPAGE).status_code == 201
+    rows = _rows(fresh_session, instructor_exam.id)
+    registration_ids = [row.id for row in rows]
+    _add_exercise_points(fresh_session, instructor_exam, rows[0])
+    assert _count_exercise_points_for(fresh_session, registration_ids) == 1
+
+    response = api.delete(
+        f"/api/exams/{instructor_exam.id}/registrations", params={"confirm": "true"}
+    )
+
+    assert response.status_code == 204
+    assert response.content == b""
+    assert _count_registrations(fresh_session, instructor_exam.id) == 0
+    assert _count_exercise_points_for(fresh_session, registration_ids) == 0
+
+
+def test_delete_all_without_confirm_is_409_and_deletes_nothing(
+    api: TestClient, instructor_exam: Exam, fresh_session: Session
+) -> None:
+    assert _import(api, instructor_exam.id, MULTIPAGE).status_code == 201
+
+    response = api.delete(f"/api/exams/{instructor_exam.id}/registrations")
+
+    assert response.status_code == 409
+    assert _count_registrations(fresh_session, instructor_exam.id) == 50
+
+
+def test_delete_all_removes_excluded_registrations_too(
+    api: TestClient, instructor_exam: Exam, fresh_session: Session
+) -> None:
+    """§5.3: ``excluded`` is kept for audit, but "Alle entfernen" is a full reset, not a filter."""
+    assert _import(api, instructor_exam.id, MULTIPAGE).status_code == 201
+    target = _rows(fresh_session, instructor_exam.id)[0]
+    assert api.patch(f"/api/registrations/{target.id}", json={"excluded": True}).status_code == 200
+
+    response = api.delete(
+        f"/api/exams/{instructor_exam.id}/registrations", params={"confirm": "true"}
+    )
+
+    assert response.status_code == 204
+    assert _count_registrations(fresh_session, instructor_exam.id) == 0
+
+
+def test_delete_all_of_an_empty_exam_is_still_204(api: TestClient, instructor_exam: Exam) -> None:
+    """Idempotent: zero registrations to delete is not an error."""
+    response = api.delete(
+        f"/api/exams/{instructor_exam.id}/registrations", params={"confirm": "true"}
+    )
+
+    assert response.status_code == 204
+
+
+def test_delete_all_does_not_touch_another_exam(
+    api: TestClient, instructor_exam: Exam, fresh_session: Session, session: Session
+) -> None:
+    """Scoping check: only the targeted exam's registrations are affected."""
+    other_exam = Exam(
+        lecture_id=instructor_exam.lecture_id,
+        owner_id=instructor_exam.owner_id,
+        semester=instructor_exam.semester,
+        termin="2. Termin",
+    )
+    session.add(other_exam)
+    session.commit()
+    assert _import(api, instructor_exam.id, MULTIPAGE).status_code == 201
+    assert _import(api, other_exam.id, SECOND_COURSE).status_code == 201
+
+    response = api.delete(
+        f"/api/exams/{instructor_exam.id}/registrations", params={"confirm": "true"}
+    )
+
+    assert response.status_code == 204
+    assert _count_registrations(fresh_session, instructor_exam.id) == 0
+    assert _count_registrations(fresh_session, other_exam.id) == 15
+
+
+def test_delete_all_ownership_and_auth(
+    api: TestClient,
+    other_api: TestClient,
+    admin_api: TestClient,
+    client: TestClient,
+    instructor_exam: Exam,
+    fresh_session: Session,
+) -> None:
+    """Another instructor and an admin both get ``404`` (§3: never ``403``).
+
+    No session at all gets ``401``.
+    """
+    assert _import(api, instructor_exam.id, MULTIPAGE).status_code == 201
+
+    assert (
+        other_api.delete(
+            f"/api/exams/{instructor_exam.id}/registrations", params={"confirm": "true"}
+        ).status_code
+        == 404
+    )
+    assert (
+        admin_api.delete(
+            f"/api/exams/{instructor_exam.id}/registrations", params={"confirm": "true"}
+        ).status_code
+        == 404
+    )
+    assert (
+        client.delete(
+            f"/api/exams/{instructor_exam.id}/registrations", params={"confirm": "true"}
+        ).status_code
+        == 401
+    )
+
+    # Nothing any of the above tried had any effect.
+    assert _count_registrations(fresh_session, instructor_exam.id) == 50
 
 
 # --------------------------------------------------------------------------------------------

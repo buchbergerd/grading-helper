@@ -138,6 +138,7 @@ yet recorded" and is deliberately distinct from `false` ("nicht erschienen", §7
 | POST | `/api/exams/{id}/registrations` | `{matrikelnummer, nachname, vorname, course_code, module_title, versuch, kommentar?, flagged?, excluded?}` | `201` — the manual late-registration path (§5.3). `course_code`/`module_title` are required: there is no PDF to take them from |
 | PATCH | `/api/registrations/{id}` | any subset, incl. `excluded`, `attended`, `bonus_points` | `200` + `RegistrationOut` |
 | DELETE | `/api/registrations/{id}` | — | `204`. A **real** deletion, for a row added in error — distinct from `excluded` |
+| DELETE | `/api/exams/{id}/registrations?confirm=true` | — | `204`. Deletes **every** registration of the exam (including excluded ones) and, by cascade, all their `ExercisePoints` — "Alle entfernen", a reset of the import. `409` unless `?confirm=true`. Distinct from `excluded`: that flag hides a student while keeping their data for audit (§5.3); this route destroys the rows and any grade already entered for them, with no undo |
 | GET | `/api/exams/{id}/registrations/count` | — | `{total, per_course: [{course_code, count}]}`, excluded students already omitted (§6's head count) |
 
 Import semantics, all from §5.3:
@@ -288,6 +289,13 @@ is derived from the observed maximum, not from `reference_max`**: an uncapped `A
 (§7.3) and an over-max exercise entry (§8 warns but does not clamp) both exceed it, and students
 above `reference_max` must not fall off the chart. `versuch_breakdown` lists only attempt numbers
 that actually occur, ascending — not assumed dense or capped.
+
+Both `total_points_histogram` and every entry in `exercise_histograms` default to a **1.0-point**
+bin width (`bin_width` in the payload, a canonical decimal string). §9's spec text suggests `0.5`
+for exercise histograms; that default was changed to `1.0` at the user's explicit request so it
+matches the total-points histogram — §9 itself calls its bin widths "a sensible default, not a
+hard requirement". `build_exam_statistics`'s `total_points_bin_width`/`exercise_bin_width`
+keyword arguments (`app/statistics.py`) can still override either independently per call.
 
 The full field-by-field contract with the reasoning behind each decision lives in
 `backend/app/statistics.py`'s TypedDicts; `frontend/src/api/client.ts` mirrors them.

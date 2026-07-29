@@ -41,7 +41,7 @@ from __future__ import annotations
 from typing import Annotated, Any, NoReturn
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.api.exams import get_owned_exam
@@ -74,6 +74,10 @@ router = APIRouter(tags=["registrations"])
 REGISTRATION_NOT_FOUND_DETAIL = "Anmeldung nicht gefunden."
 NO_FILES_DETAIL = "Es wurde keine PDF-Datei hochgeladen."
 FALLBACK_FILENAME = "unbenannt.pdf"
+REGISTRATIONS_DELETE_ALL_CONFIRM_DETAIL = (
+    "Das Entfernen aller Anmeldungen löscht unwiderruflich auch alle bereits eingetragenen "
+    "Punkte dieser Prüfung. Bitte mit ?confirm=true bestätigen."
+)
 
 #: ``PdfImportError`` subclass -> stable machine-readable code for the ``422`` payload. The
 #: German ``message`` is what the instructor reads; the code is what the frontend branches on,
@@ -620,6 +624,41 @@ def delete_registration(registration_id: int, user: CurrentUser, db: DbSession) 
     a student who should merely not sit the exam must be **excluded**, not deleted.
     """
     db.delete(get_owned_registration(db, user, registration_id))
+    db.commit()
+
+
+@router.delete("/exams/{exam_id}/registrations", status_code=status.HTTP_204_NO_CONTENT)
+def delete_all_registrations(
+    exam_id: int,
+    user: CurrentUser,
+    db: DbSession,
+    confirm: bool = Query(default=False),
+) -> None:
+    """Remove every registration of an exam — the "start the import over" reset ("Alle entfernen").
+
+    **This is a real deletion, not an ``excluded`` flip.** §5.3 keeps ``excluded`` as an audit
+    flag precisely so a student can be hidden without losing their data; this route is the
+    opposite of that — it destroys the rows outright, cascading at the database level to every
+    ``ExercisePoints`` row entered against them. Any grade already transcribed for these students
+    is gone with no undo, which is why it needs ``?confirm=true`` exactly like ``DELETE
+    /api/lectures/{id}`` and ``DELETE /api/exams/{id}``.
+
+    Deletes **all** registrations of the exam, including excluded ones — this is a reset of the
+    whole import, not a filtered "delete the visible ones" operation. An exam with zero
+    registrations is not an error: the route is idempotent and still returns ``204``.
+
+    One bulk ``DELETE`` statement rather than a Python loop of ``session.delete()`` per row, for
+    efficiency on a large registration list; the ``ExercisePoints`` children are removed by the
+    ``ON DELETE CASCADE`` on ``exercise_points.registration_id`` (``app/models/registration.py``),
+    which fires because ``app/db.py`` sets ``PRAGMA foreign_keys=ON`` on every SQLite connection.
+    """
+    exam = get_owned_exam(db, user, exam_id)
+    if not confirm:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=REGISTRATIONS_DELETE_ALL_CONFIRM_DETAIL,
+        )
+    db.execute(delete(StudentRegistration).where(StudentRegistration.exam_id == exam.id))
     db.commit()
 
 
