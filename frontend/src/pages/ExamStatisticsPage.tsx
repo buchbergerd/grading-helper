@@ -218,25 +218,28 @@ export default function ExamStatisticsPage(): JSX.Element {
             )
           </span>
         </p>
-        <table>
-          <caption className="visually-hidden">Notenverteilung je Note</caption>
-          <thead>
-            <tr>
-              <th scope="col">Note</th>
-              <th scope="col" className="numeric">
-                Anzahl
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {series.gradeDistribution.map((entry) => (
-              <tr key={entry.label} data-testid={`grade-row-${entry.label}`}>
-                <th scope="row">{entry.label}</th>
-                <td className="numeric">{entry.count}</td>
+        <details className="chart-table-details" data-testid="grade-distribution-table-details">
+          <summary>Werte als Tabelle anzeigen</summary>
+          <table>
+            <caption className="visually-hidden">Notenverteilung je Note</caption>
+            <thead>
+              <tr>
+                <th scope="col">Note</th>
+                <th scope="col" className="numeric">
+                  Anzahl
+                </th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {series.gradeDistribution.map((entry) => (
+                <tr key={entry.label} data-testid={`grade-row-${entry.label}`}>
+                  <th scope="row">{entry.label}</th>
+                  <td className="numeric">{entry.count}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </details>
       </div>
 
       {/* ------------------------------------------------------------ Histogramm Gesamtpunkte */}
@@ -249,19 +252,21 @@ export default function ExamStatisticsPage(): JSX.Element {
       />
 
       {/* --------------------------------------------------------------------- pro Aufgabe */}
-      {series.exerciseHistograms.map((histogram, index) => {
-        const source = stats.exercise_histograms[index];
-        return (
-          <HistogramSection
-            key={histogram.title}
-            title={histogram.title}
-            maxObserved={source?.max_observed ?? null}
-            includedCount={source?.included_count ?? 0}
-            bars={histogram.bars}
-            testIdPrefix={`exercise-histogram-${index}`}
-          />
-        );
-      })}
+      <div className="exercise-histogram-grid">
+        {series.exerciseHistograms.map((histogram, index) => {
+          const source = stats.exercise_histograms[index];
+          return (
+            <HistogramSection
+              key={histogram.title}
+              title={histogram.title}
+              maxObserved={source?.max_observed ?? null}
+              includedCount={source?.included_count ?? 0}
+              bars={histogram.bars}
+              testIdPrefix={`exercise-histogram-${index}`}
+            />
+          );
+        })}
+      </div>
 
       {/* --------------------------------------------------------- Bestehensquote nach Versuch */}
       <div className="panel">
@@ -271,31 +276,34 @@ export default function ExamStatisticsPage(): JSX.Element {
         ) : (
           <>
             <VersuchChart data={series.versuch} />
-            <table>
-              <caption className="visually-hidden">Bestehensquote nach Versuch</caption>
-              <thead>
-                <tr>
-                  <th scope="col">Versuch</th>
-                  <th scope="col" className="numeric">
-                    Bestanden
-                  </th>
-                  <th scope="col" className="numeric">
-                    Nicht bestanden
-                  </th>
-                  <th scope="col">Durchfallquote</th>
-                </tr>
-              </thead>
-              <tbody>
-                {series.versuch.map((group) => (
-                  <tr key={group.versuch} data-testid={`versuch-row-${group.versuch}`}>
-                    <th scope="row">{group.label}</th>
-                    <td className="numeric">{group.passed}</td>
-                    <td className="numeric">{group.failed}</td>
-                    <td>{formatRate(group.failureRate)}</td>
+            <details className="chart-table-details" data-testid="versuch-table-details">
+              <summary>Werte als Tabelle anzeigen</summary>
+              <table>
+                <caption className="visually-hidden">Bestehensquote nach Versuch</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Versuch</th>
+                    <th scope="col" className="numeric">
+                      Bestanden
+                    </th>
+                    <th scope="col" className="numeric">
+                      Nicht bestanden
+                    </th>
+                    <th scope="col">Durchfallquote</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {series.versuch.map((group) => (
+                    <tr key={group.versuch} data-testid={`versuch-row-${group.versuch}`}>
+                      <th scope="row">{group.label}</th>
+                      <td className="numeric">{group.passed}</td>
+                      <td className="numeric">{group.failed}</td>
+                      <td>{formatRate(group.failureRate)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </details>
           </>
         )}
       </div>
@@ -347,25 +355,28 @@ function HistogramSection({
       ) : (
         <>
           <HistogramChart data={bars} />
-          <table>
-            <caption className="visually-hidden">{title}</caption>
-            <thead>
-              <tr>
-                <th scope="col">Bereich</th>
-                <th scope="col" className="numeric">
-                  Anzahl
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {bars.map((bin, index) => (
-                <tr key={`${bin.label}-${index}`} data-testid={`${testIdPrefix}-row-${index}`}>
-                  <th scope="row">{bin.label}</th>
-                  <td className="numeric">{bin.count}</td>
+          <details className="chart-table-details" data-testid={`${testIdPrefix}-table-details`}>
+            <summary>Werte als Tabelle anzeigen</summary>
+            <table>
+              <caption className="visually-hidden">{title}</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Bereich</th>
+                  <th scope="col" className="numeric">
+                    Anzahl
+                  </th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {bars.map((bin, index) => (
+                  <tr key={`${bin.label}-${index}`} data-testid={`${testIdPrefix}-row-${index}`}>
+                    <th scope="row">{bin.label}</th>
+                    <td className="numeric">{bin.count}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </details>
         </>
       )}
     </div>

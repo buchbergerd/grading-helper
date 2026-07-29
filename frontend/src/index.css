@@ -685,3 +685,75 @@ input.cell-warn {
   font-variant-numeric: tabular-nums;
   color: var(--fg);
 }
+
+/* ------------------------------------------------------- §9 dashboard: charts and their tables */
+
+/* Every chart's summary table lives in a collapsed-by-default <details> so the page reads as
+   charts, not as walls of numbers — the table itself never leaves the DOM (jsdom tests and print
+   both need it there), only its layout/a11y visibility toggles. */
+.chart-table-details {
+  margin-top: 0.75rem;
+}
+
+.chart-table-details > summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 0.3rem 0.5rem;
+  border-radius: var(--radius);
+  width: fit-content;
+}
+
+.chart-table-details > summary::marker {
+  color: var(--fg-muted);
+}
+
+.chart-table-details > summary:hover,
+.chart-table-details > summary:focus-visible {
+  background: var(--bg-soft);
+}
+
+.chart-table-details table {
+  margin-top: 0.5rem;
+}
+
+@media print {
+  .chart-table-details {
+    display: block;
+  }
+
+  .chart-table-details > summary {
+    display: none;
+  }
+
+  /* Newer UAs hide a closed <details>'s body via this pseudo-element rather than plain layout —
+     force it visible too, or a collapsed table still won't print even with `summary` hidden. */
+  .chart-table-details::details-content {
+    content-visibility: visible;
+  }
+}
+
+/* Per-Aufgabe histograms: a two-column grid that collapses to one column on a narrow viewport.
+   The grade-distribution, total-points and Versuch charts stay full width (plain .panel), only
+   this wrapper is gridded. */
+/* Exactly two columns, not `auto-fit`: at the 84rem container width auto-fit resolved to three
+   ~427px columns, which squeezes a 20-bin histogram to the point where its x labels collide.
+   `minmax(0, 1fr)` rather than `1fr` so a wide chart can shrink instead of forcing overflow. */
+.exercise-histogram-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+/* One column once two would each be narrower than a histogram can usefully be. */
+@media (max-width: 60rem) {
+  .exercise-histogram-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.exercise-histogram-grid > .panel {
+  margin: 0;
+  min-width: 0;
+}

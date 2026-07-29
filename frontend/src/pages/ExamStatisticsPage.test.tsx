@@ -337,6 +337,47 @@ describe("ExamStatisticsPage — Kennzahlen and rates", () => {
   });
 });
 
+describe("ExamStatisticsPage — collapsed summary tables", () => {
+  it("keeps every chart's table collapsed by default, in the DOM but reachable only once opened", async () => {
+    renderPage();
+
+    await screen.findByTestId("grade-row-1,0");
+
+    const detailsTestIds = [
+      "grade-distribution-table-details",
+      "total-points-histogram-table-details",
+      "exercise-histogram-0-table-details",
+      "exercise-histogram-1-table-details",
+      "versuch-table-details",
+    ];
+
+    for (const testId of detailsTestIds) {
+      const details = screen.getByTestId(testId) as HTMLDetailsElement;
+      expect(details.tagName).toBe("DETAILS");
+      expect(details.open).toBe(false);
+      // The table stays in the DOM even while collapsed (jsdom tests and print both need it).
+      expect(details.querySelector("table")).not.toBeNull();
+      expect(details.querySelector("summary")?.textContent).toBe("Werte als Tabelle anzeigen");
+    }
+
+    // Opening one details element reveals its row content without affecting the others.
+    const user = userEvent.setup();
+    const totalPointsSummary = screen
+      .getByTestId("total-points-histogram-table-details")
+      .querySelector("summary")!;
+    await user.click(totalPointsSummary);
+
+    const totalPointsDetails = screen.getByTestId(
+      "total-points-histogram-table-details",
+    ) as HTMLDetailsElement;
+    expect(totalPointsDetails.open).toBe(true);
+    expect(screen.getByTestId("total-points-histogram-row-0").textContent).toContain("10,0–11,0");
+
+    const gradeDetails = screen.getByTestId("grade-distribution-table-details") as HTMLDetailsElement;
+    expect(gradeDetails.open).toBe(false);
+  });
+});
+
 describe("ExamStatisticsPage — in-progress banner", () => {
   it("shows the banner when students are incomplete or unrecorded", async () => {
     renderPage();
