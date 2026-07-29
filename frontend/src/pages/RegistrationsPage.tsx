@@ -13,6 +13,7 @@ import { Link, useParams } from "react-router-dom";
 import {
   countRegistrations,
   createRegistration,
+  deleteAllRegistrations,
   deleteRegistration,
   downloadAttendanceList,
   errorMessages,
@@ -28,6 +29,7 @@ import {
   type RegistrationOut,
 } from "../api/client";
 import { ConfirmDialog } from "../components/ConfirmDialog";
+import { IconEdit, IconExclude, IconInclude, IconTrash } from "../components/icons";
 import { ErrorList, SuccessNotice } from "../components/Messages";
 import { EMPTY_DISPLAY, pluralize } from "../util/format";
 import { parsePositiveInteger, parseRouteId } from "../util/id";
@@ -118,6 +120,10 @@ export default function RegistrationsPage(): JSX.Element {
 
   const [pendingDeleteId, setPendingDeleteId] = useState<number | null>(null);
   const [deleting, setDeleting] = useState(false);
+
+  /* -------------------------------------------------------------------------- delete all (§5.3) */
+  const [confirmingDeleteAll, setConfirmingDeleteAll] = useState(false);
+  const [deletingAll, setDeletingAll] = useState(false);
 
   const [downloading, setDownloading] = useState(false);
   const [downloadMessages, setDownloadMessages] = useState<string[]>([]);
@@ -339,6 +345,23 @@ export default function RegistrationsPage(): JSX.Element {
 
   const pendingDeleteRow = registrations.find((row) => row.id === pendingDeleteId) ?? null;
 
+  /* -------------------------------------------------------------------------- delete all (§5.3) */
+
+  async function onConfirmDeleteAll(): Promise<void> {
+    if (examId === null) return;
+    setDeletingAll(true);
+    try {
+      await deleteAllRegistrations(examId);
+      setConfirmingDeleteAll(false);
+      await reloadRegistrations();
+    } catch (error) {
+      setListMessages(errorMessages(error));
+      setConfirmingDeleteAll(false);
+    } finally {
+      setDeletingAll(false);
+    }
+  }
+
   /* --------------------------------------------------------------------------- attendance list */
 
   async function onDownloadAttendanceList(): Promise<void> {
@@ -554,7 +577,20 @@ export default function RegistrationsPage(): JSX.Element {
 
       {/* -------------------------------------------------------------------------- registrations */}
       <div className="panel">
-        <h2 style={{ marginTop: 0 }}>Angemeldete Studierende</h2>
+        <div
+          className="button-row"
+          style={{ justifyContent: "space-between", marginBottom: "0.75rem" }}
+        >
+          <h2 style={{ marginTop: 0, marginBottom: 0 }}>Angemeldete Studierende</h2>
+          <button
+            type="button"
+            className="danger"
+            onClick={() => setConfirmingDeleteAll(true)}
+            disabled={registrations.length === 0}
+          >
+            Alle entfernen
+          </button>
+        </div>
         <div className="row" style={{ marginBottom: "0.75rem" }}>
           <div>
             <label htmlFor="course-filter">Studiengang</label>
@@ -640,27 +676,34 @@ export default function RegistrationsPage(): JSX.Element {
                       <td className="numeric">{row.versuch}</td>
                       <td>{row.kommentar ?? EMPTY_DISPLAY}</td>
                       <td>
-                        <div className="button-row">
-                          <button type="button" onClick={() => onStartEdit(row)}>
-                            Bearbeiten
+                        <div className="button-row icon-button-row">
+                          <button
+                            type="button"
+                            className="icon-button"
+                            aria-label="Bearbeiten"
+                            title="Bearbeiten"
+                            onClick={() => onStartEdit(row)}
+                          >
+                            <IconEdit />
                           </button>
                           <button
                             type="button"
+                            className="icon-button"
+                            aria-label={row.excluded ? "Einschließen" : "Ausschließen"}
+                            title={row.excluded ? "Einschließen" : "Ausschließen"}
                             onClick={() => void onToggleExcluded(row)}
                             disabled={togglingId === row.id}
                           >
-                            {togglingId === row.id
-                              ? "…"
-                              : row.excluded
-                                ? "Wieder aufnehmen"
-                                : "Ausschließen"}
+                            {row.excluded ? <IconInclude /> : <IconExclude />}
                           </button>
                           <button
                             type="button"
-                            className="danger"
+                            className="danger icon-button"
+                            aria-label="Löschen"
+                            title="Löschen"
                             onClick={() => setPendingDeleteId(row.id)}
                           >
-                            Löschen
+                            <IconTrash />
                           </button>
                         </div>
                       </td>
@@ -895,6 +938,23 @@ export default function RegistrationsPage(): JSX.Element {
             Nachvollziehbarkeit in der Datenbank, Löschen entfernt sie und alle zugehörigen Daten
             vollständig. Nutzen Sie „Ausschließen“, wenn die Anmeldung nur nicht in
             Anwesenheitsliste, Punkteerfassung und Berichten erscheinen soll.
+          </p>
+        </ConfirmDialog>
+      ) : null}
+
+      {confirmingDeleteAll ? (
+        <ConfirmDialog
+          title="Alle Anmeldungen entfernen?"
+          confirmLabel="Alle entfernen"
+          busy={deletingAll}
+          onCancel={() => setConfirmingDeleteAll(false)}
+          onConfirm={() => void onConfirmDeleteAll()}
+        >
+          <p>
+            {pluralize(registrations.length, "Anmeldung", "Anmeldungen")} werden unwiderruflich
+            gelöscht — einschließlich aller bereits erfassten Anwesenheits- und Punkteeinträge.
+            Das betrifft auch ausgeschlossene Anmeldungen und ist unabhängig von der aktuellen
+            Studiengang-Auswahl. Diese Aktion kann nicht rückgängig gemacht werden.
           </p>
         </ConfirmDialog>
       ) : null}

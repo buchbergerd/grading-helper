@@ -1,13 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 
-import {
-  createExam,
-  errorMessages,
-  getLecture,
-  type BonusMode,
-  type LectureDetail,
-} from "../api/client";
+import { createExam, errorMessages, getLecture, type LectureDetail } from "../api/client";
 import { BONUS_MODE_OPTIONS } from "../grading/bonusMode";
 import { ErrorList } from "../components/Messages";
 import { formatDateOrDash, parseDateInput } from "../util/format";
@@ -24,7 +18,6 @@ export default function LectureDetailPage(): JSX.Element {
   const [semester, setSemester] = useState("");
   const [termin, setTermin] = useState("1. Termin");
   const [examDate, setExamDate] = useState("");
-  const [bonusMode, setBonusMode] = useState<BonusMode>("ALWAYS");
   const [creating, setCreating] = useState(false);
 
   const reload = useCallback(async () => {
@@ -68,13 +61,14 @@ export default function LectureDetailPage(): JSX.Element {
 
     setCreating(true);
     try {
-      // exercises/grading_schema are deliberately omitted: the server then copies them forward
-      // from this lecture's most recent prior exam (section 4) as a one-time editable copy.
+      // exercises/grading_schema/bonus_mode are deliberately omitted: the server then copies
+      // them forward from this lecture's most recent prior exam (section 4) as a one-time
+      // editable copy, or defaults bonus_mode to "ALWAYS" if there is none. Bonus mode is
+      // configured on the exam itself, not duplicated here on the create form.
       await createExam(lectureId, {
         semester: semester.trim(),
         termin: termin.trim(),
         exam_date: isoDate,
-        bonus_mode: bonusMode,
       });
       setSemester("");
       setExamDate("");
@@ -132,8 +126,10 @@ export default function LectureDetailPage(): JSX.Element {
           <form className="panel" onSubmit={(event) => void onCreateExam(event)}>
             <h2 style={{ marginTop: 0 }}>Neue Klausur anlegen</h2>
             <p className="small muted">
-              Aufgaben und Notenschlüssel werden beim Anlegen einmalig aus der zuletzt angelegten
-              Klausur dieser Vorlesung übernommen und können danach frei bearbeitet werden.
+              Aufgaben, Notenschlüssel und Bonuspunkte-Regel werden beim Anlegen einmalig aus der
+              zuletzt angelegten Klausur dieser Vorlesung übernommen (ohne vorherige Klausur:
+              „Bonuspunkte zählen immer“) und können danach in der Klausuransicht frei bearbeitet
+              werden.
             </p>
             <div className="row">
               <div>
@@ -171,23 +167,6 @@ export default function LectureDetailPage(): JSX.Element {
                 />
               </div>
             </div>
-            <fieldset style={{ marginTop: "1rem" }}>
-              <legend>Bonuspunkte</legend>
-              {BONUS_MODE_OPTIONS.map((option) => (
-                <div className="radio-option" key={option.value}>
-                  <input
-                    id={`new-bonus-${option.value}`}
-                    type="radio"
-                    name="new-bonus-mode"
-                    value={option.value}
-                    checked={bonusMode === option.value}
-                    onChange={() => setBonusMode(option.value)}
-                  />{" "}
-                  <label htmlFor={`new-bonus-${option.value}`}>{option.label}</label>
-                  <span className="explanation">{option.explanation}</span>
-                </div>
-              ))}
-            </fieldset>
             <button type="submit" className="primary" disabled={creating}>
               {creating ? "Wird angelegt …" : "Klausur anlegen"}
             </button>

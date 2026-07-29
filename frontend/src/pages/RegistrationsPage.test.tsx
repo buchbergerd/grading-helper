@@ -143,6 +143,20 @@ describe("RegistrationsPage — head count (§6)", () => {
 });
 
 describe("RegistrationsPage — exclude toggle and delete", () => {
+  it("labels each row action by its German name even though it renders as an icon, and the exclude toggle reflects current state", async () => {
+    renderPage();
+
+    const row1 = within(await screen.findByTestId("registration-row-1"));
+    expect(row1.getByRole("button", { name: "Bearbeiten" })).not.toBeNull();
+    expect(row1.getByRole("button", { name: "Ausschließen" })).not.toBeNull();
+    expect(row1.getByRole("button", { name: "Löschen" })).not.toBeNull();
+
+    // Row 3 (REG_EXCLUDED) is already excluded, so it must offer the inverse action.
+    const row3 = within(screen.getByTestId("registration-row-3"));
+    expect(row3.getByRole("button", { name: "Einschließen" })).not.toBeNull();
+    expect(row3.queryByRole("button", { name: "Ausschließen" })).toBeNull();
+  });
+
   it("sends PATCH {excluded: true} when excluding a row", async () => {
     const user = userEvent.setup();
     const mock = renderPage({
@@ -192,6 +206,77 @@ describe("RegistrationsPage — exclude toggle and delete", () => {
 
     await waitFor(() => {
       expect(mock.mock.calls.some((call) => call[1]?.method === "DELETE")).toBe(true);
+    });
+  });
+});
+
+describe("RegistrationsPage — remove all (§5.3)", () => {
+  it("asks for confirmation before deleting all, and cancelling sends nothing", async () => {
+    const user = userEvent.setup();
+    const mock = renderPage();
+
+    await screen.findByTestId("registration-row-1");
+    await user.click(screen.getByRole("button", { name: "Alle entfernen" }));
+
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog.textContent).toContain("unwiderruflich");
+    expect(dialog.textContent).toContain("Punkte");
+    expect(dialog.textContent).toContain("3 Anmeldungen");
+
+    await user.click(within(dialog).getByRole("button", { name: "Abbrechen" }));
+    expect(mock.mock.calls.some((call) => call[1]?.method === "DELETE")).toBe(false);
+  });
+
+  it("deletes every registration and refreshes the list on confirm", async () => {
+    const user = userEvent.setup();
+    let deleted = false;
+    const mock = renderPage({
+      "/api/exams/7/registrations": (_url, init) => {
+        if (init?.method === "DELETE") {
+          deleted = true;
+          return jsonResponse(204, undefined);
+        }
+        return jsonResponse(200, deleted ? [] : REGISTRATIONS);
+      },
+    });
+
+    await screen.findByTestId("registration-row-1");
+    await user.click(screen.getByRole("button", { name: "Alle entfernen" }));
+    const dialog = await screen.findByRole("alertdialog");
+    await user.click(within(dialog).getByRole("button", { name: "Alle entfernen" }));
+
+    await waitFor(() => {
+      const deleteCall = mock.mock.calls.find(
+        (call) =>
+          String(call[0]).startsWith("/api/exams/7/registrations") &&
+          call[1]?.method === "DELETE",
+      );
+      expect(deleteCall).toBeDefined();
+      expect(String(deleteCall?.[0])).toContain("confirm=true");
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Keine Anmeldungen für diese Auswahl.")).not.toBeNull();
+    });
+  });
+
+  it("shows an API error when deleting all fails", async () => {
+    const user = userEvent.setup();
+    renderPage({
+      "/api/exams/7/registrations": (_url, init) => {
+        if (init?.method === "DELETE") return jsonResponse(409, { detail: "Konflikt." });
+        return jsonResponse(200, REGISTRATIONS);
+      },
+    });
+
+    await screen.findByTestId("registration-row-1");
+    await user.click(screen.getByRole("button", { name: "Alle entfernen" }));
+    const dialog = await screen.findByRole("alertdialog");
+    await user.click(within(dialog).getByRole("button", { name: "Alle entfernen" }));
+
+    const errorBox = await screen.findByTestId("list-errors");
+    await waitFor(() => {
+      expect(errorBox.textContent).toContain("Konflikt");
     });
   });
 });

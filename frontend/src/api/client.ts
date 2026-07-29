@@ -521,6 +521,18 @@ export function deleteRegistration(id: number): Promise<void> {
 }
 
 /**
+ * Destructive: deletes **every** registration of the exam (including excluded ones) and, by
+ * cascade, all their `ExercisePoints` — "Alle entfernen", a reset of the import. Distinct from
+ * `excluded`, which only hides a student while keeping their data for audit (§5.3); this route
+ * destroys the rows and any grade already entered for them, with no undo. The API refuses with
+ * `409` unless `?confirm=true` is passed, so the caller must have shown a confirmation dialog
+ * first.
+ */
+export function deleteAllRegistrations(examId: number): Promise<void> {
+  return request<void>(`/exams/${examId}/registrations?confirm=true`, { method: "DELETE" });
+}
+
+/**
  * `POST /exams/{id}/registrations/import` — `multipart/form-data`, field name `files`
  * (repeatable). Bypasses `request()` on purpose: that helper always sets
  * `Content-Type: application/json`, and a multipart body must let the browser set
