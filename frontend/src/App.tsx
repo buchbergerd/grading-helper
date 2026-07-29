@@ -4,6 +4,7 @@ import { RequireAdmin, RequireAuth, useAuth } from "./auth/AuthContext";
 import AdminUsersPage from "./pages/AdminUsersPage";
 import ChangePasswordPage from "./pages/ChangePasswordPage";
 import ExamDetailPage from "./pages/ExamDetailPage";
+import ExamStatisticsPage from "./pages/ExamStatisticsPage";
 import LectureDetailPage from "./pages/LectureDetailPage";
 import LectureListPage from "./pages/LectureListPage";
 import LoginPage from "./pages/LoginPage";
@@ -63,6 +64,7 @@ export default function App(): JSX.Element {
         <Route path="/klausuren/:examId" element={<ExamDetailPage />} />
         <Route path="/klausuren/:examId/anmeldungen" element={<RegistrationsPage />} />
         <Route path="/klausuren/:examId/punkte" element={<PointsEntryPage />} />
+        <Route path="/klausuren/:examId/statistik" element={<ExamStatisticsPage />} />
         <Route path="/passwort" element={<ChangePasswordPage />} />
         <Route
           path="/admin/benutzer"

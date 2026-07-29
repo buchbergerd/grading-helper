@@ -712,10 +712,18 @@ export function getCompleteness(examId: number): Promise<CompletenessResult> {
  * `Content-Disposition` header (`attachment; filename="..."; filename*=UTF-8''...`); the RFC
  * 5987 `filename*` part is preferred since it carries German characters correctly.
  */
-export async function downloadAttendanceList(examId: number): Promise<DownloadedFile> {
+export function downloadAttendanceList(examId: number): Promise<DownloadedFile> {
+  return downloadPdf(`/exams/${examId}/reports/attendance-list`, "anwesenheitsliste.pdf");
+}
+
+/**
+ * Fetch a PDF report. Shared by every report route: they differ only in path and in the
+ * filename to fall back on when the header is missing or unparseable.
+ */
+async function downloadPdf(path: string, fallbackFilename: string): Promise<DownloadedFile> {
   let response: Response;
   try {
-    response = await fetch(`${BASE}/exams/${examId}/reports/attendance-list`, {
+    response = await fetch(`${BASE}${path}`, {
       method: "GET",
       credentials: "same-origin",
       headers: { Accept: "application/pdf" },
@@ -731,9 +739,151 @@ export async function downloadAttendanceList(examId: number): Promise<Downloaded
 
   const blob = await response.blob();
   const filename =
-    filenameFromContentDisposition(response.headers.get("Content-Disposition")) ??
-    "anwesenheitsliste.pdf";
+    filenameFromContentDisposition(response.headers.get("Content-Disposition")) ?? fallbackFilename;
   return { blob, filename };
+}
+
+/* ------------------------------------------------------- internal report / statistics (§9) */
+
+/*
+ * These interfaces mirror the `TypedDict`s in `backend/app/statistics.py` one-for-one — that
+ * module is §9's single source of statistics, feeding both the Typst PDF and this dashboard so
+ * the two can never report different numbers. Keep the two files in step; the Python side
+ * carries the reasoning behind each field.
+ *
+ * Nothing here is recomputed on the client. Rates arrive with their numerator and denominator
+ * and an already-rounded `percent`; bin captions arrive already formatted in German. The
+ * dashboard's job is to draw them, not to derive them.
+ */
+
+/** A proportion plus the counts it came from. `percent` is `null` when `denominator` is 0. */
+export interface Rate {
+  numerator: number;
+  denominator: number;
+  /** DECIMAL — string, one decimal place, e.g. `"84.6"`. Render `null` as `EMPTY_DISPLAY`. */
+  percent: string | null;
+}
+
+export interface GradeCount {
+  /** A numeric grade of the §7.1 scale, e.g. `"1.3"`. */
+  grade: string;
+  count: number;
+}
+
+export interface GradeDistribution {
+  /** All ten grades, best to worst, zeros included. */
+  numeric: GradeCount[];
+  numeric_count: number;
+  failed_count: number;
+  not_attended_count: number;
+  /** DECIMAL — string, two decimal places. `null` when nobody has a numeric grade. */
+  mean: string | null;
+  /** DECIMAL — string, two decimal places. `null` when nobody has a numeric grade. */
+  median: string | null;
+}
+
+/** One bar: half-open `[lower, upper)`, except the last bin of a histogram, which is closed. */
+export interface HistogramBin {
+  /** DECIMAL — string. */
+  lower: string;
+  /** DECIMAL — string. */
+  upper: string;
+  /** Finished German caption, e.g. `"12,0–13,0"`. Use as-is; do not rebuild it from the edges. */
+  label: string;
+  count: number;
+}
+
+export interface Histogram {
+  /** German heading: `"Gesamtpunkte"` or the exercise's name. */
+  title: string;
+  /** DECIMAL — string. */
+  bin_width: string;
+  /** DECIMAL — string. Axis reference only; the bin range may legitimately exceed it (§7.3). */
+  reference_max: string;
+  /** DECIMAL — string, or `null` when no student contributed a value. */
+  max_observed: string | null;
+  /** Students contributing to this histogram — not the number registered. */
+  included_count: number;
+  bins: HistogramBin[];
+}
+
+export interface VersuchGroup {
+  versuch: number;
+  /** German caption, e.g. `"1. Versuch"`. */
+  label: string;
+  registered: number;
+  attended: number;
+  not_attended: number;
+  attendance_not_recorded: number;
+  graded: number;
+  incomplete: number;
+  passed: number;
+  failed: number;
+  failure_rate: Rate;
+}
+
+export interface StatisticsCounts {
+  /** Non-excluded registrations only (§5.3). */
+  registered: number;
+  excluded: number;
+  attended: number;
+  not_attended: number;
+  /** `attended === null` — not yet recorded, distinct from `not_attended`. */
+  attendance_not_recorded: number;
+  /** Attended **and** complete: the denominator of the pass and failure rates. */
+  graded: number;
+  /** Attended but missing exercise points — left out of the grade and total-points charts. */
+  incomplete: number;
+  passed: number;
+  failed: number;
+}
+
+export interface StatisticsRates {
+  /** attended / registered. */
+  attendance: Rate;
+  /** passed / graded. */
+  passing: Rate;
+  /** failed / graded. */
+  failure: Rate;
+}
+
+export interface ExamStatistics {
+  exam_id: number;
+  lecture_name: string;
+  semester: string;
+  termin: string;
+  /** `DD.MM.YYYY`, already formatted, or `null`. */
+  exam_date: string | null;
+  /** `DD.MM.YYYY HH:MM`. Relevant to the PDF; the dashboard is live. */
+  generated_at: string;
+  /** DECIMAL — string. */
+  max_points: string;
+  bonus_mode: BonusMode;
+  /** `false` when the exam has no complete ten-grade schema: no grade exists for anybody yet. */
+  grading_configured: boolean;
+  /** DECIMAL — string, or `null` when `grading_configured` is `false`. */
+  passing_threshold: string | null;
+  counts: StatisticsCounts;
+  rates: StatisticsRates;
+  grade_distribution: GradeDistribution;
+  total_points_histogram: Histogram;
+  /** One per exercise, in `position` order. */
+  exercise_histograms: Histogram[];
+  versuch_breakdown: VersuchGroup[];
+}
+
+/**
+ * `GET /exams/{id}/statistics` — §9's live statistics. Deliberately **not** gated by the §8.1
+ * completeness check (that gate is §10/§11 only): this is a view over grading in progress, and
+ * the payload reports how many students are still incomplete rather than refusing to answer.
+ */
+export function getExamStatistics(examId: number): Promise<ExamStatistics> {
+  return request<ExamStatistics>(`/exams/${examId}/statistics`);
+}
+
+/** `GET /exams/{id}/reports/internal` — the same statistics as a PDF (§9). */
+export function downloadInternalReport(examId: number): Promise<DownloadedFile> {
+  return downloadPdf(`/exams/${examId}/reports/internal`, "interner-bericht.pdf");
 }
 
 async function parseJsonBody(response: Response): Promise<unknown> {

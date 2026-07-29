@@ -3,8 +3,10 @@
 # NOT YET FUNCTIONAL: backend/frontend app code doesn't exist yet (see /SPECIFICATION.md,
 # /CLAUDE.md). This file fixes the shape the build must have so the no-runtime-network
 # constraint (§13) is designed in from the start, not retrofitted:
-#   - typst toolchain, fonts, and vendored cetz/cetz-plot packages are baked in at build time.
+#   - typst toolchain and fonts are baked in at build time.
 #   - no `pip install` / `npm install` / typst package fetch may happen at container start.
+#   - no Typst @preview package is imported by any template, so none needs vendoring today
+#     (see the note further down and docs/open-questions.md #17).
 #
 # TODO once app code exists: pin exact base image digests, fill in COPY paths, add a
 # non-root user, healthcheck, and multi-stage layer caching for deps vs. app code.
@@ -20,6 +22,13 @@ WORKDIR /frontend
 # ---- backend runtime ----
 FROM python:3.12-slim AS backend
 
+# Not cosmetic. The §9 internal report prints "Erstellt am: DD.MM.YYYY HH:MM" from the container's
+# *local* time (app/statistics.py::_format_generated_at). A slim base image has no TZ set and
+# therefore runs on UTC, which would print a German-facing timestamp one to two hours in the past
+# — wrong in a way nobody would think to question. Set it here rather than in the app so the
+# choice stays an operations decision; override it in docker-compose for another region.
+ENV TZ=Europe/Berlin
+
 # System deps: fonts for German umlauts (Noto Sans/Serif), typst binary.
 # TODO: pin typst version; install from a release binary (no cargo/network at runtime).
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -34,9 +43,14 @@ WORKDIR /app
 # COPY backend/pyproject.toml backend/uv.lock ./
 # RUN pip install --no-cache-dir uv && uv sync --frozen --no-dev
 
-# Vendor cetz / cetz-plot Typst packages at build time (see vendor-typst-packages.sh) so
-# report rendering never reaches out to the @preview registry at runtime.
+# Vendoring cetz / cetz-plot is currently NOT NEEDED — no template imports an @preview package.
+# §12 named them for charts, but §9's report draws its bars with native Typst primitives behind
+# one `bar-chart` function (see app/reports/templates/internal_report.typ and open-questions #17),
+# so there is nothing to fetch and the §13 no-runtime-network constraint holds trivially. Restore
+# the two lines below only if a later report adopts a package:
 # COPY deploy/typst-packages/ /root/.cache/typst/packages/preview/
+# (typst-py accepts `package_path`/`package_cache_path`, so a vendored tree is wired up in Python,
+# not via an env var.)
 
 # COPY backend/app/ ./app/
 # COPY --from=frontend-build /frontend/dist ./static/

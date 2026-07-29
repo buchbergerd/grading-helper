@@ -362,6 +362,7 @@ export default function ExamDetailPage(): JSX.Element {
       <p className="button-row">
         <Link to={`/klausuren/${exam.id}/anmeldungen`}>Anmeldungen verwalten</Link>
         <Link to={`/klausuren/${exam.id}/punkte`}>Punkte &amp; Anwesenheit erfassen</Link>
+        <Link to={`/klausuren/${exam.id}/statistik`}>Statistik</Link>
       </p>
 
       <ErrorList messages={messages} title={messages.length > 1 ? "Bitte prüfen:" : undefined} />

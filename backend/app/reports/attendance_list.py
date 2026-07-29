@@ -189,11 +189,14 @@ _ASCII_TRANSLITERATION = {
 }
 
 
-def _sanitize_filename_part(value: str) -> str:
+def sanitize_filename_part(value: str) -> str:
     """One filename component: no path separators, no whitespace, no empty result.
 
     ``semester`` is free text and realistically contains a slash ("WiSe 23/24"), which would
     otherwise turn the download name into a path.
+
+    Promoted to a public name (from ``_sanitize_filename_part``) so ``internal_report.py`` can
+    reuse it rather than duplicating it — see that module's docstring.
     """
     cleaned = "".join("-" if char in "/\\:" else char for char in value)
     cleaned = "_".join(cleaned.split())
@@ -201,7 +204,7 @@ def _sanitize_filename_part(value: str) -> str:
     return cleaned or "unbenannt"
 
 
-def _to_ascii(value: str) -> str:
+def to_ascii(value: str) -> str:
     """An ASCII-only rendering, for the latin-1-safe ``filename=`` fallback.
 
     HTTP header values must be latin-1 encodable and non-ASCII bytes in a plain ``filename=`` are
@@ -217,14 +220,14 @@ def attendance_list_filename(exam: Exam) -> str:
     """The German download filename, e.g. ``Anwesenheitsliste_WiSe_23-24_1._Termin.pdf``."""
     parts = [
         "Anwesenheitsliste",
-        _sanitize_filename_part(exam.semester),
-        _sanitize_filename_part(exam.termin),
+        sanitize_filename_part(exam.semester),
+        sanitize_filename_part(exam.termin),
     ]
     return "_".join(parts) + ".pdf"
 
 
 def content_disposition(filename: str) -> str:
     """``Content-Disposition`` carrying both an ASCII fallback and the RFC 5987 UTF-8 name."""
-    ascii_name = _sanitize_filename_part(_to_ascii(filename.removesuffix(".pdf"))) + ".pdf"
+    ascii_name = sanitize_filename_part(to_ascii(filename.removesuffix(".pdf"))) + ".pdf"
     quoted = quote(filename, safe="")
     return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quoted}"

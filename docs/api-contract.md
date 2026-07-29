@@ -231,8 +231,64 @@ registration must have every exercise's points entered. `app/api/points.py::exam
 is the shared helper the future report routes call directly rather than re-deriving the same
 list. Excluded students are never counted.
 
+## Internal report / statistics (§9) — milestone 4
+
+Owner-scoped like every other exam route: a non-owner — **including an admin** — gets `404`, not
+`403` (§3's least-privilege default, restated by §9: "visible only to the exam's owner (and, per
+§3, not to admins by default)").
+
+| Method | Path | Response |
+|---|---|---|
+| GET | `/api/exams/{id}/statistics` | `200` + `ExamStatistics` (below) |
+| GET | `/api/exams/{id}/reports/internal` | `200 application/pdf` + `Content-Disposition`, same header convention as the attendance list |
+
+**Neither route is gated by the §8.1 completeness check.** That gate is for the §10/§11 exports
+only. §9 is explicitly a live view over grading in progress, so a half-graded exam gets a `200`
+that reports how much is still missing — never a `409`.
+
+Both routes serve the output of one function, `app/statistics.py::build_exam_statistics`, which
+§9 requires to be the single source of these numbers so the PDF and the dashboard can never
+disagree. The JSON route returns that payload verbatim (no pydantic response model: the payload
+is already the wire shape, and pydantic's lax coercion could turn a stray `float` into a
+plausible-looking string instead of failing).
+
+### `ExamStatistics`
+
+Top level: `exam_id`, `lecture_name`, `semester`, `termin`, `exam_date` (`DD.MM.YYYY` or `null`),
+`generated_at` (`DD.MM.YYYY HH:MM`), `max_points`, `bonus_mode`, `grading_configured`,
+`passing_threshold`, `counts`, `rates`, `grade_distribution`, `total_points_histogram`,
+`exercise_histograms`, `versuch_breakdown`.
+
+Three rules the frontend depends on — all three exist so no renderer ever computes anything:
+
+- **Decimals are canonical strings**, as everywhere else in this API. `percent` values carry one
+  decimal place, mean/median grades two, both already rounded `ROUND_HALF_UP` **in the backend**.
+  A renderer that rounds again can make the PDF and the dashboard disagree.
+- **Every rate is `{numerator, denominator, percent}`** — `percent` is `null` when `denominator`
+  is 0 (render as "—"). Never divide the counts client-side. `rates.attendance` is
+  attended/registered; `rates.passing` and `rates.failure` divide by `counts.graded` (attended
+  **and** complete), *not* by `attended`, or an in-progress exam understates its failure rate.
+- **Histogram bin captions arrive pre-formatted in German** (`label`, e.g. `12,0–13,0`); `lower`
+  and `upper` are there for tooltips and axis work, not for rebuilding the caption.
+
+`counts` distinguishes `not_attended` (`attended = false`) from `attendance_not_recorded`
+(`attended = null`), and carries `incomplete`: students who attended but are missing at least one
+exercise entry. Those are **omitted from `grade_distribution` and `total_points_histogram`** — a
+partial sum would render as a fake "nicht bestanden" — while their entered exercise points still
+count in that exercise's own histogram. Both views must surface `incomplete` prominently so a
+half-graded distribution is never read as final. `registered` counts non-excluded registrations
+only (§5.3); `excluded` is reported alongside it purely to explain the difference.
+
+Histogram bins are half-open `[lower, upper)` except the last, which is closed. **The bin range
+is derived from the observed maximum, not from `reference_max`**: an uncapped `ALWAYS` bonus
+(§7.3) and an over-max exercise entry (§8 warns but does not clamp) both exceed it, and students
+above `reference_max` must not fall off the chart. `versuch_breakdown` lists only attempt numbers
+that actually occur, ascending — not assumed dense or capped.
+
+The full field-by-field contract with the reasoning behind each decision lives in
+`backend/app/statistics.py`'s TypedDicts; `frontend/src/api/client.ts` mirrors them.
+
 ## Deferred to later milestones
 
-Reports (§9–§11) — the shared statistics module, the internal PDF/dashboard, and the
-examination-office/student-results PDF+Excel exports, all gated on
+Reports (§10–§11) — the examination-office and student-results PDF+Excel exports, both gated on
 `app/api/points.py::exam_completeness` passing for every non-excluded registration.

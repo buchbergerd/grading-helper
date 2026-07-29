@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.api import admin, auth, exams, lectures, points, registrations, reports
+from app.api import admin, auth, exams, lectures, points, registrations, reports, statistics
 from app.db import init_db
 
 
@@ -48,5 +48,9 @@ app.include_router(registrations.router, prefix="/api")
 # Points/attendance entry and the §8.1 completeness gate (§8): ``/api/exams/{id}/points``,
 # ``/api/exams/{id}/completeness`` and the flat ``/api/registrations/{id}/points``.
 app.include_router(points.router, prefix="/api")
-# Exam-scoped generated documents, e.g. ``/api/exams/{id}/reports/attendance-list`` (§6).
+# Exam-scoped generated documents: ``/api/exams/{id}/reports/attendance-list`` (§6) and
+# ``/api/exams/{id}/reports/internal`` (§9).
 app.include_router(reports.router, prefix="/api")
+# The same §9 statistics as JSON for the live dashboard: ``/api/exams/{id}/statistics``. Separate
+# from the reports router, which serves only binary documents.
+app.include_router(statistics.router, prefix="/api")

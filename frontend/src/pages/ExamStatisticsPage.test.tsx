@@ -1,0 +1,351 @@
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
+
+import ExamStatisticsPage from "./ExamStatisticsPage";
+import { blobResponse, installFetchMock, jsonResponse } from "../test/mockFetch";
+import type { ExamDetail, ExamStatistics } from "../api/client";
+
+/**
+ * jsdom has no `ResizeObserver` (it does no layout), which Recharts' `ResponsiveContainer` needs
+ * just to mount — without this it throws and the whole tree fails to render, not just the chart.
+ * A no-op stand-in is all that's needed since this page's tests assert against the parallel
+ * `<table>`s, never against chart SVG (see the note in `statistics/charts.tsx`). Assigned once at
+ * module scope, not via `vi.stubGlobal`, so it survives every test's `vi.unstubAllGlobals()`.
+ */
+if (typeof globalThis.ResizeObserver === "undefined") {
+  class NoopResizeObserver {
+    observe(): void {
+      // no-op: jsdom never lays out, so there is nothing to observe.
+    }
+    unobserve(): void {
+      // no-op
+    }
+    disconnect(): void {
+      // no-op
+    }
+  }
+  (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = NoopResizeObserver;
+}
+
+const EXAM: ExamDetail = {
+  id: 7,
+  lecture_id: 3,
+  lecture_name: "Grundlagen der Informationstechnik",
+  semester: "WiSe 23/24",
+  termin: "1. Termin",
+  exam_date: "2024-02-15",
+  bonus_mode: "ALWAYS",
+  owner_id: 1,
+  registration_count: 39,
+  exercises: [],
+  grading_schema: [],
+};
+
+/**
+ * A fully populated §9 payload: 39 registered, 2 excluded, 35 attended, 2 not attended, 2 still
+ * unrecorded, 33 graded (28 passed / 5 failed) and 2 incomplete — every KPI count exercised at
+ * once. Two exercises, two Versuch groups (1 and 2, so not every attempt in the schema exists),
+ * a grading schema that is fully configured.
+ */
+const STATS: ExamStatistics = {
+  exam_id: 7,
+  lecture_name: "Grundlagen der Informationstechnik",
+  semester: "WiSe 23/24",
+  termin: "1. Termin",
+  exam_date: "15.02.2024",
+  generated_at: "28.07.2026 10:00",
+  max_points: "45.00",
+  bonus_mode: "ALWAYS",
+  grading_configured: true,
+  passing_threshold: "22.50",
+  counts: {
+    registered: 39,
+    excluded: 2,
+    attended: 35,
+    not_attended: 2,
+    attendance_not_recorded: 2,
+    graded: 33,
+    incomplete: 2,
+    passed: 28,
+    failed: 5,
+  },
+  rates: {
+    attendance: { numerator: 35, denominator: 39, percent: "89.7" },
+    passing: { numerator: 28, denominator: 33, percent: "84.8" },
+    failure: { numerator: 5, denominator: 33, percent: "15.2" },
+  },
+  grade_distribution: {
+    numeric: [
+      { grade: "1.0", count: 2 },
+      { grade: "1.3", count: 3 },
+      { grade: "1.7", count: 4 },
+      { grade: "2.0", count: 5 },
+      { grade: "2.3", count: 4 },
+      { grade: "2.7", count: 3 },
+      { grade: "3.0", count: 3 },
+      { grade: "3.3", count: 2 },
+      { grade: "3.7", count: 1 },
+      { grade: "4.0", count: 1 },
+    ],
+    numeric_count: 28,
+    failed_count: 5,
+    not_attended_count: 2,
+    mean: "2.15",
+    median: "2.00",
+  },
+  total_points_histogram: {
+    title: "Gesamtpunkte",
+    bin_width: "1.0",
+    reference_max: "45.00",
+    max_observed: "44.00",
+    included_count: 33,
+    bins: [
+      { lower: "10.0", upper: "11.0", label: "10,0–11,0", count: 1 },
+      { lower: "11.0", upper: "12.0", label: "11,0–12,0", count: 2 },
+    ],
+  },
+  exercise_histograms: [
+    {
+      title: "Aufgabe 1",
+      bin_width: "0.5",
+      reference_max: "20.00",
+      max_observed: "19.50",
+      included_count: 33,
+      bins: [{ lower: "18.0", upper: "18.5", label: "18,0–18,5", count: 3 }],
+    },
+    {
+      title: "Aufgabe 2",
+      bin_width: "0.5",
+      reference_max: "25.00",
+      max_observed: "24.00",
+      included_count: 33,
+      bins: [{ lower: "23.5", upper: "24.0", label: "23,5–24,0", count: 1 }],
+    },
+  ],
+  versuch_breakdown: [
+    {
+      versuch: 1,
+      label: "1. Versuch",
+      registered: 35,
+      attended: 32,
+      not_attended: 2,
+      attendance_not_recorded: 1,
+      graded: 30,
+      incomplete: 1,
+      passed: 26,
+      failed: 4,
+      failure_rate: { numerator: 4, denominator: 30, percent: "13.3" },
+    },
+    {
+      versuch: 2,
+      label: "2. Versuch",
+      registered: 4,
+      attended: 3,
+      not_attended: 0,
+      attendance_not_recorded: 1,
+      graded: 3,
+      incomplete: 1,
+      passed: 2,
+      failed: 1,
+      failure_rate: { numerator: 1, denominator: 3, percent: "33.3" },
+    },
+  ],
+};
+
+/** A payload where everything is complete and graded — the in-progress banner must not appear. */
+const STATS_COMPLETE: ExamStatistics = {
+  ...STATS,
+  counts: { ...STATS.counts, incomplete: 0, attendance_not_recorded: 0, attended: 37, graded: 35 },
+};
+
+const STATS_NO_SCHEMA: ExamStatistics = {
+  ...STATS,
+  grading_configured: false,
+  passing_threshold: null,
+  grade_distribution: {
+    ...STATS.grade_distribution,
+    numeric: STATS.grade_distribution.numeric.map((entry) => ({ ...entry, count: 0 })),
+    numeric_count: 0,
+    failed_count: 0,
+    mean: null,
+    median: null,
+  },
+};
+
+function baseRoutes(
+  overrides: Partial<Record<string, (url: string, init: RequestInit | undefined) => Response>> = {},
+): Record<string, (url: string, init: RequestInit | undefined) => Response> {
+  return {
+    "/api/exams/7": () => jsonResponse(200, EXAM),
+    "/api/exams/7/statistics": () => jsonResponse(200, STATS),
+    ...overrides,
+  };
+}
+
+function renderPage(
+  overrides?: Partial<Record<string, (url: string, init: RequestInit | undefined) => Response>>,
+): ReturnType<typeof installFetchMock> {
+  const mock = installFetchMock(baseRoutes(overrides));
+  render(
+    <MemoryRouter initialEntries={["/klausuren/7/statistik"]}>
+      <Routes>
+        <Route path="/klausuren/:examId/statistik" element={<ExamStatisticsPage />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+  return mock;
+}
+
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
+
+describe("ExamStatisticsPage — loading", () => {
+  it("shows a loading indicator before the data arrives", () => {
+    installFetchMock({
+      "/api/exams/7": () => jsonResponse(200, EXAM),
+      "/api/exams/7/statistics": () => jsonResponse(200, STATS),
+    });
+    render(
+      <MemoryRouter initialEntries={["/klausuren/7/statistik"]}>
+        <Routes>
+          <Route path="/klausuren/:examId/statistik" element={<ExamStatisticsPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    expect(screen.getByText("Wird geladen …")).not.toBeNull();
+  });
+});
+
+describe("ExamStatisticsPage — Kennzahlen and rates", () => {
+  it("renders every KPI count and the three formatted rates", async () => {
+    renderPage();
+
+    await screen.findByText("Interner Bericht — Grundlagen der Informationstechnik");
+
+    expect(screen.getByTestId("kpi-registered").textContent).toContain("39");
+    expect(screen.getByTestId("kpi-attended").textContent).toContain("35");
+    expect(screen.getByTestId("kpi-not-attended").textContent).toContain("2");
+    expect(screen.getByTestId("kpi-attendance-not-recorded").textContent).toContain("2");
+    expect(screen.getByTestId("kpi-graded").textContent).toContain("33");
+    expect(screen.getByTestId("kpi-incomplete").textContent).toContain("2");
+
+    // formatPercent inserts a non-breaking space before "%" (util/format.ts) —  , not " ".
+    expect(screen.getByTestId("rate-attendance").textContent).toContain("89,7 % (35 von 39)");
+    expect(screen.getByTestId("rate-passing").textContent).toContain("84,8 % (28 von 33)");
+    expect(screen.getByTestId("rate-failure").textContent).toContain("15,2 % (5 von 33)");
+  });
+
+  it("shows the mean/median labelled over the numeric_count students, German comma decimals", async () => {
+    renderPage();
+
+    const summary = await screen.findByTestId("grade-summary");
+    expect(summary.textContent).toContain("2,15");
+    expect(summary.textContent).toContain("2,00");
+    expect(summary.textContent).toContain("28");
+  });
+
+  it("renders the grade distribution, total-points and versuch tables with the expected rows", async () => {
+    renderPage();
+
+    await screen.findByTestId("grade-row-1,0");
+    expect(screen.getByTestId("grade-row-1,0").textContent).toContain("2");
+    expect(screen.getByTestId("grade-row-nicht bestanden").textContent).toContain("5");
+    expect(screen.getByTestId("grade-row-n.e.").textContent).toContain("2");
+
+    expect(screen.getByTestId("total-points-histogram-row-0").textContent).toContain("10,0–11,0");
+    expect(screen.getByTestId("total-points-histogram-row-0").textContent).toContain("1");
+
+    expect(screen.getByTestId("exercise-histogram-0-row-0").textContent).toContain("18,0–18,5");
+    expect(screen.getByTestId("exercise-histogram-1-row-0").textContent).toContain("23,5–24,0");
+
+    const versuch1 = screen.getByTestId("versuch-row-1");
+    expect(versuch1.textContent).toContain("1. Versuch");
+    expect(versuch1.textContent).toContain("26");
+    expect(versuch1.textContent).toContain("4");
+    expect(versuch1.textContent).toContain("13,3 % (4 von 30)");
+
+    const versuch2 = screen.getByTestId("versuch-row-2");
+    expect(versuch2.textContent).toContain("2. Versuch");
+  });
+});
+
+describe("ExamStatisticsPage — in-progress banner", () => {
+  it("shows the banner when students are incomplete or unrecorded", async () => {
+    renderPage();
+
+    const banner = await screen.findByTestId("grading-progress-banner");
+    expect(banner.textContent).toContain("noch nicht");
+  });
+
+  it("does not show the banner when everything is complete and graded", async () => {
+    renderPage({ "/api/exams/7/statistics": () => jsonResponse(200, STATS_COMPLETE) });
+
+    await screen.findByText("Interner Bericht — Grundlagen der Informationstechnik");
+    expect(screen.queryByTestId("grading-progress-banner")).toBeNull();
+  });
+
+  it("states that no grading schema is configured when grading_configured is false", async () => {
+    renderPage({ "/api/exams/7/statistics": () => jsonResponse(200, STATS_NO_SCHEMA) });
+
+    const banner = await screen.findByTestId("grading-progress-banner");
+    expect(banner.textContent).toContain("kein vollständiger Notenschlüssel konfiguriert");
+  });
+});
+
+describe("ExamStatisticsPage — errors", () => {
+  it("renders a 403's German message", async () => {
+    renderPage({
+      "/api/exams/7/statistics": () =>
+        jsonResponse(403, { detail: "Keine Berechtigung für diese Aktion." }),
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Keine Berechtigung für diese Aktion.")).not.toBeNull();
+    });
+  });
+
+  it("renders the generic network-error message when fetch itself fails", async () => {
+    renderPage({
+      "/api/exams/7/statistics": () => {
+        throw new Error("network down");
+      },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Der Server ist nicht erreichbar.")).not.toBeNull();
+    });
+  });
+});
+
+describe("ExamStatisticsPage — PDF download", () => {
+  it("fetches the internal-report PDF and triggers a browser download", async () => {
+    const user = userEvent.setup();
+    const createObjectURL = vi.fn(() => "blob:mock-url");
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal("URL", { ...URL, createObjectURL, revokeObjectURL });
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+
+    const pdfBlob = new Blob(["%PDF-1.4 ..."], { type: "application/pdf" });
+    renderPage({
+      "/api/exams/7/reports/internal": () =>
+        blobResponse(200, pdfBlob, {
+          "Content-Disposition":
+            "attachment; filename=\"interner-bericht.pdf\"; filename*=UTF-8''interner-bericht.pdf",
+        }),
+    });
+
+    await user.click(await screen.findByRole("button", { name: "PDF herunterladen" }));
+
+    await waitFor(() => {
+      expect(createObjectURL).toHaveBeenCalledWith(pdfBlob);
+    });
+    expect(clickSpy).toHaveBeenCalled();
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:mock-url");
+
+    clickSpy.mockRestore();
+  });
+});

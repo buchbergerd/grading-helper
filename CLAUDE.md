@@ -9,17 +9,23 @@ code — do not rely on a summary of it, including this one.** This file does no
 spec; it only points at it and lists the constraints an implementation is most likely to violate
 silently. If this file and the spec ever disagree, the spec wins — fix this file.
 
-Current status: **milestones 1–3 (§15.1–§15.3) complete, backend and frontend** — data model,
+Current status: **milestones 1–4 (§15.1–§15.4) complete, backend and frontend** — data model,
 auth/accounts, Lecture/Exam CRUD, registration-PDF import, attendance-list PDF, the grading
-engine (`app/grading/engine.py`), the points/attendance API (`app/api/points.py`), and the React
-UI over all of it including the spreadsheet-style points grid. §7.5's worked example passes both
-as engine unit tests and end-to-end through HTTP.
+engine (`app/grading/engine.py`), the points/attendance API (`app/api/points.py`), the §9
+internal report (`app/statistics.py` → Typst PDF + React dashboard), and the React UI over all of
+it including the spreadsheet-style points grid. §7.5's worked example passes as engine unit
+tests, end-to-end through HTTP, and through the statistics module.
 
-**Next up: §15.4** — the internal report: one shared statistics module feeding both a Typst PDF
-and an interactive in-app dashboard, so the two can never disagree. Then §15.5 (examination-office
-and student-results reports, PDF + Excel) and §15.6 (copy-forward, exam deletion, Docker).
+**Next up: §15.5** — the examination-office and student-results reports (PDF + Excel), both
+gated on §8.1's completeness check. Then §15.6 (copy-forward, exam deletion, Docker packaging).
 `SPECIFICATION.md` §15 gives the intended build order — follow it rather than jumping to
 whichever feature seems easiest.
+
+**§9's one-module rule outlives its milestone.** `app/statistics.py` is the *only* place that
+turns an exam into statistics; `app/reports/internal_report.py` and `app/api/statistics.py` both
+render the payload it returns and compute nothing. Adding a number to either view means adding it
+to that module. `tests/test_statistics_api.py::test_pdf_and_json_report_the_same_numbers` is what
+catches a renderer that starts deriving its own — keep it passing rather than relaxing it.
 
 `docs/api-contract.md` is the backend↔frontend HTTP contract. Keep it in sync when you change
 an endpoint; it exists so neither side has to read the other's code.
@@ -100,9 +106,19 @@ implementing agent, not because they're exhaustive. Section references are to `S
 - **Everything user-facing is German**: UI text, PDF/Excel report content, number formatting
   (comma decimal separator, "1,3") and dates (DD.MM.YYYY). This repo's own docs/comments are in
   English — don't let that leak into generated output.
-- **No outbound network calls at runtime** (§13): Typst's `cetz`/`cetz-plot` packages must be
-  vendored into the image at build time, not fetched from the `@preview` registry when a report
-  is generated. Same principle for anything else — this app must work fully offline once deployed.
+- **No outbound network calls at runtime** (§13). For Typst this currently means the strongest
+  possible form: **no template imports an `@preview` package at all**, so there is nothing to
+  fetch and nothing to vendor. §12 named `cetz`/`cetz-plot` for charts, but §9's bars are drawn
+  with native Typst primitives behind one `bar-chart()` function in
+  `app/reports/templates/internal_report.typ` (see `docs/open-questions.md` #17 — a deliberate,
+  user-flagged deviation, not an oversight). If a later report does adopt a `@preview` package,
+  it must be vendored into the image at build time and wired up via `typst-py`'s `package_path`.
+  Same principle for anything else — this app must work fully offline once deployed.
+- **Decimals are canonical (dot) strings in the payload; each renderer applies the German comma.**
+  `formatDecimal` does it in the frontend, the `de()` helper does it in the Typst templates. That
+  split exists because the same payload feeds the JSON API (where §7.0's canonical form is the
+  contract) and the PDF (where §14 #6 requires "1,3"). A separator swap is the *only* transform a
+  renderer may apply to a payload number — no rounding, no re-scaling, no recomputation.
 - **Exam data is real personal data** (names, Matrikelnummern) — don't log it, don't put it in
   test fixtures that aren't clearly synthetic/anonymized (see `test_data/README.md`), don't
   include it in error messages that might end up in shared logs.
