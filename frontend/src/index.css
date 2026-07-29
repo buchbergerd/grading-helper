@@ -444,6 +444,15 @@ input.field-invalid {
   vertical-align: bottom;
 }
 
+/* Without this, the page-wide `white-space: nowrap` above would let a long exercise name (not
+   the ~3.75rem-wide point input) dictate the whole column's width — the dominant reason a
+   handful-of-exercises exam could still end up needing to scroll. Wrapping the header lets the
+   column follow the input instead. */
+.points-grid th.exercise-header {
+  white-space: normal;
+  max-width: 7rem;
+}
+
 .points-grid .col-sticky-1,
 .points-grid .col-sticky-2 {
   position: sticky;
@@ -456,17 +465,20 @@ input.field-invalid {
    overflow is truncated with an ellipsis instead. */
 .points-grid .col-sticky-1 {
   left: 0;
-  width: 6rem;
-  max-width: 6rem;
+  width: 5.5rem;
+  max-width: 5.5rem;
   overflow: hidden;
   text-overflow: ellipsis;
   box-shadow: inset -1px 0 0 var(--border);
 }
 
+/* No hard `width` here (unlike col-sticky-1): it's the last sticky column, so nothing is
+   positioned relative to its own right edge — only `col-sticky-1`'s width matters for this
+   column's `left` offset. Letting it size to content up to `max-width` is what "flexes" for a
+   short name while still truncating a long one instead of forcing every row to the same width. */
 .points-grid .col-sticky-2 {
-  left: 6rem;
-  width: 10rem;
-  max-width: 10rem;
+  left: 5.5rem;
+  max-width: 9rem;
   overflow: hidden;
   text-overflow: ellipsis;
   box-shadow: inset -1px 0 0 var(--border);
@@ -485,17 +497,41 @@ input.field-invalid {
 }
 
 .points-grid input.cell-input {
-  width: 4.5rem;
+  width: 3.75rem;
   font-variant-numeric: tabular-nums;
   text-align: right;
   padding: 0.15rem 0.3rem;
 }
 
-.points-grid input.bonus-input {
-  width: 4.5rem;
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-  padding: 0.15rem 0.3rem;
+/* One radio pair per student row (§8): laid out side by side and compactly, overriding the
+   page-wide `label` rule (block, bold, margin-bottom) which is meant for form fields, not an
+   inline radio caption. */
+.attendance-radio-group {
+  display: flex;
+  gap: 0.6rem;
+  white-space: nowrap;
+}
+
+.attendance-radio-group label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  font-weight: 400;
+  font-size: 0.85rem;
+  margin: 0;
+}
+
+/* The single, exam-wide bonus field above the grid (§7.3) — a fieldset for visual parity with
+   the bonus-mode radios on the exam-settings page, not a data-entry table. */
+.points-grid-bonus {
+  max-width: 32rem;
+}
+
+.points-grid-bonus .explanation {
+  display: block;
+  margin: 0.5rem 0 0;
+  font-size: 0.85rem;
+  color: var(--fg-muted);
 }
 
 .points-grid td.numeric-cell {

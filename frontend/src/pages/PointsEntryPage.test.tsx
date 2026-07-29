@@ -217,7 +217,7 @@ describe("PointsEntryPage — the decimal rule", () => {
 
     // Trigger a save without touching this cell (toggle a different row's attendance) so the
     // PUT body can be inspected for whether the untouched value survived unchanged.
-    await user.selectOptions(screen.getByTestId("attended-2"), "present");
+    await user.click(screen.getByTestId("attended-2-present"));
     await user.click(screen.getByRole("button", { name: "Speichern" }));
 
     await waitFor(() => {
@@ -250,7 +250,7 @@ describe("PointsEntryPage — empty vs. zero (§8.1)", () => {
 
     // Anna's Aufgabe 2 is not entered at all (absent from `points` in the fixture).
     await screen.findByTestId("point-1-2");
-    await user.selectOptions(screen.getByTestId("attended-2"), "present"); // just to enable Save
+    await user.click(screen.getByTestId("attended-2-present")); // just to enable Save
     await user.click(screen.getByRole("button", { name: "Speichern" }));
 
     await waitFor(() => {
@@ -275,22 +275,100 @@ describe("PointsEntryPage — empty vs. zero (§8.1)", () => {
     });
   });
 
-  it("clearing the bonus field sends null (the server's own default-to-0), never the empty string", async () => {
+  it("clearing the shared bonus field sends null for every row (the server's own default-to-0), never the empty string", async () => {
     const user = userEvent.setup();
     const mock = renderPage();
 
-    // Anna's bonus starts at "0.00" (see the fixture) — clear it entirely.
-    const bonusCell = await screen.findByTestId("bonus-1");
-    await user.clear(bonusCell);
+    // All three fixture rows start at "0.00" — clear the shared field entirely.
+    const bonusField = await screen.findByTestId("bonus-all");
+    await user.clear(bonusField);
     await user.click(screen.getByRole("button", { name: "Speichern" }));
 
     await waitFor(() => {
       const body = putBodyOf(mock);
-      const annaRow = body.entries.find((row) => row.registration_id === 1);
       // Never "" — the decimal-string contract rejects an empty string outright (a 422 for the
       // whole batch), so an emptied bonus field must ask for the server's own default instead.
-      expect(annaRow?.bonus_points).toBeNull();
+      for (const row of body.entries) {
+        expect(row.bonus_points).toBeNull();
+      }
     });
+  });
+});
+
+describe("PointsEntryPage — the single, exam-wide bonus field (§7.3)", () => {
+  it("fans a typed value out to every row's bonus_points on save, not just the visible ones", async () => {
+    const user = userEvent.setup();
+    const mock = renderPage();
+
+    await screen.findByTestId("points-row-1");
+    await user.selectOptions(screen.getByLabelText("Studiengang"), "B.Sc. WiIng ET/IT");
+    expect(screen.queryByTestId("points-row-3")).toBeNull(); // Clara (M.Sc. ET) is filtered out
+
+    const bonusField = await screen.findByTestId("bonus-all");
+    await user.clear(bonusField);
+    await user.type(bonusField, "2");
+
+    await user.click(screen.getByRole("button", { name: "Speichern" }));
+
+    await waitFor(() => {
+      const body = putBodyOf(mock);
+      // All three rows, including Clara who was hidden by the course filter throughout.
+      for (const registrationId of [1, 2, 3]) {
+        const row = body.entries.find((entry) => entry.registration_id === registrationId);
+        expect(row?.bonus_points).toBe("2");
+      }
+    });
+  });
+
+  it("shows a mixed-value hint and leaves the field blank when rows disagree, without overwriting until edited", async () => {
+    const user = userEvent.setup();
+    const mixedGrid: PointsGrid = {
+      ...GRID,
+      entries: GRID.entries.map((entry) =>
+        entry.id === 3 ? { ...entry, bonus_points: "5.00" } : entry,
+      ),
+    };
+    const mock = renderPage({
+      "/api/exams/7/points": (_url, init) =>
+        init?.method === "PUT" ? echoPut(init) : jsonResponse(200, mixedGrid),
+    });
+
+    const bonusField = (await screen.findByTestId("bonus-all")) as HTMLInputElement;
+    // Blank, not silently picking Anna's/Ben's "0.00" or Clara's "5.00".
+    expect(bonusField.value).toBe("");
+    expect(screen.getByTestId("bonus-mixed-hint").textContent).toContain("2");
+
+    // Saving without touching the field must send each row's own, still-distinct value.
+    await user.click(screen.getByTestId("attended-2-present")); // just to enable Save
+    await user.click(screen.getByRole("button", { name: "Speichern" }));
+
+    await waitFor(() => {
+      const body = putBodyOf(mock);
+      expect(body.entries.find((row) => row.registration_id === 1)?.bonus_points).toBe("0.00");
+      expect(body.entries.find((row) => row.registration_id === 3)?.bonus_points).toBe("5.00");
+    });
+  });
+
+  it("editing the field while mixed clears the hint and applies the new value to every row", async () => {
+    const user = userEvent.setup();
+    const mixedGrid: PointsGrid = {
+      ...GRID,
+      entries: GRID.entries.map((entry) =>
+        entry.id === 3 ? { ...entry, bonus_points: "5.00" } : entry,
+      ),
+    };
+    renderPage({
+      "/api/exams/7/points": (_url, init) =>
+        init?.method === "PUT" ? echoPut(init) : jsonResponse(200, mixedGrid),
+    });
+
+    const bonusField = (await screen.findByTestId("bonus-all")) as HTMLInputElement;
+    expect(screen.getByTestId("bonus-mixed-hint")).not.toBeNull();
+
+    await user.type(bonusField, "1");
+
+    expect(screen.queryByTestId("bonus-mixed-hint")).toBeNull();
+    expect(bonusField.value).toBe("1");
   });
 });
 
@@ -306,7 +384,7 @@ describe("PointsEntryPage — attendance (§7.4/§8.1)", () => {
     expect(screen.getByTestId("grade-3").textContent).toBe("n.e.");
 
     // Trigger a save via a different row and confirm Clara's stored value survives the payload.
-    await user.selectOptions(screen.getByTestId("attended-2"), "present");
+    await user.click(screen.getByTestId("attended-2-present"));
     await user.click(screen.getByRole("button", { name: "Speichern" }));
 
     await waitFor(() => {
@@ -317,11 +395,13 @@ describe("PointsEntryPage — attendance (§7.4/§8.1)", () => {
     });
   });
 
-  it('renders attended=null as a distinct third state, not as "not attended"', async () => {
+  it('renders attended=null as a distinct third state, not as "not attended" — neither radio checked', async () => {
     renderPage();
 
-    const select = (await screen.findByTestId("attended-2")) as HTMLSelectElement;
-    expect(select.value).toBe("unknown");
+    const present = (await screen.findByTestId("attended-2-present")) as HTMLInputElement;
+    const absent = screen.getByTestId("attended-2-absent") as HTMLInputElement;
+    expect(present.checked).toBe(false);
+    expect(absent.checked).toBe(false);
 
     const row = screen.getByTestId("points-row-2");
     expect(row.className).toContain("row-attendance-unknown");
@@ -330,6 +410,94 @@ describe("PointsEntryPage — attendance (§7.4/§8.1)", () => {
     // And it must not be disabled the way a not-attended row's inputs are.
     const cell = screen.getByTestId("point-2-1") as HTMLInputElement;
     expect(cell.disabled).toBe(false);
+  });
+
+  it("clicking the 'anwesend' radio records attended=true and clicking 'nicht anwesend' records false", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    const presentRadio = (await screen.findByTestId("attended-2-present")) as HTMLInputElement;
+    await user.click(presentRadio);
+    expect(presentRadio.checked).toBe(true);
+    expect(screen.getByTestId("points-row-2").className).not.toContain("row-attendance-unknown");
+
+    const absentRadio = screen.getByTestId("attended-2-absent") as HTMLInputElement;
+    await user.click(absentRadio);
+    expect(absentRadio.checked).toBe(true);
+    expect(presentRadio.checked).toBe(false);
+    expect(screen.getByTestId("points-row-2").className).toContain("row-not-attended");
+  });
+
+  it("recording one row's attendance leaves every other row's state untouched, including a still-null row", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByTestId("attended-2-present"));
+
+    // Anna (row 1) was attended=true from the fixture and must stay that way.
+    expect((screen.getByTestId("attended-1-present") as HTMLInputElement).checked).toBe(true);
+    // Clara (row 3) was attended=false from the fixture and must stay that way — not flipped to
+    // null or true just because a sibling row changed.
+    expect((screen.getByTestId("attended-3-absent") as HTMLInputElement).checked).toBe(true);
+  });
+});
+
+describe("PointsEntryPage — bulk attendance action (§8)", () => {
+  it("shows a confirmation dialog naming only the not-yet-recorded rows, and applies to them alone", async () => {
+    const user = userEvent.setup();
+    const mock = renderPage();
+
+    await screen.findByTestId("points-row-1");
+    // Only Ben (row 2) is attended=null in the fixture — Anna is already true, Clara already false.
+    const bulkButton = screen.getByTestId("bulk-mark-present");
+    await user.click(bulkButton);
+
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog.textContent).toContain("1");
+    expect(dialog.textContent).toContain("nicht");
+
+    await user.click(screen.getByRole("button", { name: "Anwenden" }));
+
+    // Ben is now marked present …
+    expect((screen.getByTestId("attended-2-present") as HTMLInputElement).checked).toBe(true);
+    // … Clara's explicit "nicht anwesend" must survive untouched …
+    expect((screen.getByTestId("attended-3-absent") as HTMLInputElement).checked).toBe(true);
+    // … and Anna's pre-existing "anwesend" is unaffected.
+    expect((screen.getByTestId("attended-1-present") as HTMLInputElement).checked).toBe(true);
+
+    await user.click(screen.getByRole("button", { name: "Speichern" }));
+    await waitFor(() => {
+      const body = putBodyOf(mock);
+      expect(body.entries.find((row) => row.registration_id === 2)?.attended).toBe(true);
+      expect(body.entries.find((row) => row.registration_id === 3)?.attended).toBe(false);
+    });
+  });
+
+  it("is disabled once no visible row is left unrecorded", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByTestId("points-row-1");
+    await user.click(screen.getByTestId("bulk-mark-present"));
+    await user.click(await screen.findByRole("button", { name: "Anwenden" }));
+
+    expect((screen.getByTestId("bulk-mark-present") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("cancelling the dialog leaves attendance unchanged", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByTestId("points-row-1");
+    await user.click(screen.getByTestId("bulk-mark-present"));
+    await screen.findByRole("alertdialog");
+    await user.click(screen.getByRole("button", { name: "Abbrechen" }));
+
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    const present = screen.getByTestId("attended-2-present") as HTMLInputElement;
+    const absent = screen.getByTestId("attended-2-absent") as HTMLInputElement;
+    expect(present.checked).toBe(false);
+    expect(absent.checked).toBe(false);
   });
 });
 
@@ -481,7 +649,7 @@ describe("PointsEntryPage — server errors", () => {
       },
     });
 
-    await user.selectOptions(await screen.findByTestId("attended-2"), "present");
+    await user.click(await screen.findByTestId("attended-2-present"));
     await user.click(screen.getByRole("button", { name: "Speichern" }));
 
     const errorBox = await screen.findByTestId("grid-errors");
@@ -490,5 +658,43 @@ describe("PointsEntryPage — server errors", () => {
         "Aufgabe 1: „25“ überschreitet die Höchstpunktzahl 20,00 nicht plausibel.",
       );
     });
+  });
+});
+
+describe("PointsEntryPage — select-on-focus", () => {
+  it("selects a point cell's full contents on focus, so typing replaces it", async () => {
+    renderPage();
+    const cell = (await screen.findByTestId("point-1-1")) as HTMLInputElement;
+    cell.focus();
+
+    expect(cell.selectionStart).toBe(0);
+    expect(cell.selectionEnd).toBe(cell.value.length);
+  });
+
+  it("selects the shared bonus field's full contents on focus", async () => {
+    renderPage();
+    const bonusField = (await screen.findByTestId("bonus-all")) as HTMLInputElement;
+    bonusField.focus();
+
+    expect(bonusField.selectionStart).toBe(0);
+    expect(bonusField.selectionEnd).toBe(bonusField.value.length);
+  });
+
+  // A bare `.focus()` (above) can't reproduce the real-browser sequence a mouse click actually
+  // fires: mousedown -> focus (select() runs) -> mouseup, where the mouseup is what a browser
+  // uses to place the caret / collapse the selection unless it's prevented. This drives a full
+  // click through userEvent to pin that the guard (`onSelectableMouseDown`/`onSelectableMouseUp`)
+  // is wired up and the selection survives the complete gesture — jsdom's caret/selection
+  // simulation is limited, so this is a regression pin more than a full behavioural proof.
+  it("keeps the selection intact through a full mouse click, not just a bare .focus()", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    const cell = (await screen.findByTestId("point-1-1")) as HTMLInputElement;
+    cell.blur();
+
+    await user.click(cell);
+
+    expect(cell.selectionStart).toBe(0);
+    expect(cell.selectionEnd).toBe(cell.value.length);
   });
 });

@@ -4,6 +4,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type FocusEvent,
   type KeyboardEvent,
   type MouseEvent,
 } from "react";
@@ -22,7 +23,9 @@ import {
   type PointsGrid,
   type PointsRowWrite,
 } from "../api/client";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 import { ErrorList, SuccessNotice } from "../components/Messages";
+import { BONUS_MODE_OPTIONS } from "../grading/bonusMode";
 import { compareDecimalStrings, computeGradePreview } from "../grading/preview";
 import { EMPTY_DISPLAY, formatDecimal, parseDecimalInput } from "../util/format";
 import { parseRouteId } from "../util/id";
@@ -71,23 +74,13 @@ function toEditableRow(entry: PointsEntry, exercises: readonly PointsExercise[])
   };
 }
 
-type AttendedOption = "unknown" | "present" | "absent";
-
-/** The tri-state control's option value <-> the wire's `boolean | null`. A plain checkbox
- * cannot express three states without an indeterminate hack that is also hard to test; a
- * `<select>` makes "nicht erfasst" a first-class, keyboard- and screen-reader-accessible option
- * rather than an implied default. */
-function attendedToOption(attended: boolean | null): AttendedOption {
-  if (attended === true) return "present";
-  if (attended === false) return "absent";
-  return "unknown";
-}
-
-function optionToAttended(option: string): boolean | null {
-  if (option === "present") return true;
-  if (option === "absent") return false;
-  return null;
-}
+/** Attendance is edited as two independent radio buttons ("anwesend" / "nicht anwesend") rather
+ * than a tri-state `<select>`: `row.attended === true` checks one, `=== false` checks the other,
+ * and — critically — neither being checked is a perfectly valid HTML radio state, which maps
+ * exactly onto `attended === null` ("nicht erfasst", §4/§8.1). There is no radio for "unknown",
+ * so no click can ever *uncheck* a recorded value back to `null` by accident — only a fresh row
+ * load or the bulk "mark present" action (which only ever touches already-`null` rows) produce
+ * it. */
 
 /**
  * The exercises a row currently has a parsable, non-empty value for, as canonical decimal
@@ -155,6 +148,38 @@ function buildSavePayload(
   });
 }
 
+/**
+ * Derives the single, exam-wide bonus field's display state from every row currently held in
+ * state. `bonus_points` itself stays per-registration in the database and on the wire (§7.3) —
+ * this only decides what the *one* input above the grid should show.
+ *
+ * All rows sharing one value -> show it. Different values across rows (possible from earlier
+ * per-row entry, or a copy-forward) -> show the field blank rather than silently picking one of
+ * them, so the mixed state is visible instead of an instructor unknowingly overwriting data the
+ * moment they touch the field.
+ *
+ * Grouped by **decimal value** via `compareDecimalStrings`, not by raw string equality: an
+ * untouched row's `bonus_points` can come back from the server as `"0"` while an explicitly
+ * entered zero comes back as `"0.00"` (same value, different canonical text some servers may
+ * emit) — comparing strings would misreport that as "mixed" even though every student's bonus is
+ * actually zero.
+ */
+function computeBonusField(rows: readonly EditableRow[]): {
+  text: string;
+  mixedCount: number | null;
+} {
+  if (rows.length === 0) return { text: "", mixedCount: null };
+  const representatives: string[] = [];
+  for (const row of rows) {
+    const alreadySeen = representatives.some(
+      (value) => compareDecimalStrings(value, row.bonusPointsText) === 0,
+    );
+    if (!alreadySeen) representatives.push(row.bonusPointsText);
+  }
+  if (representatives.length === 1) return { text: representatives[0] ?? "", mixedCount: null };
+  return { text: "", mixedCount: representatives.length };
+}
+
 export default function PointsEntryPage(): JSX.Element {
   const params = useParams();
   const examId = parseRouteId(params["examId"]);
@@ -178,6 +203,12 @@ export default function PointsEntryPage(): JSX.Element {
 
   const [courseFilter, setCourseFilter] = useState("");
 
+  // The shared "for the whole exam" bonus field (see `computeBonusField`) and the bulk
+  // "alle als anwesend markieren" confirmation dialog's open/closed state.
+  const [bonusFieldText, setBonusFieldText] = useState("");
+  const [bonusMixedCount, setBonusMixedCount] = useState<number | null>(null);
+  const [showBulkAttendDialog, setShowBulkAttendDialog] = useState(false);
+
   const [completeness, setCompleteness] = useState<CompletenessResult | null>(null);
   const [completenessMessages, setCompletenessMessages] = useState<string[]>([]);
 
@@ -186,6 +217,14 @@ export default function PointsEntryPage(): JSX.Element {
   // callback below (an entry is deleted when React detaches it), so switching the course filter
   // never leaves stale, detached nodes that Enter would silently focus nothing on.
   const cellRefs = useRef<Map<string, HTMLInputElement>>(new Map());
+
+  // Which element (if any) is mid-way through a "focusing click" — the mousedown that is about
+  // to move focus into it. Its paired mouseup must be swallowed or the browser's default
+  // behaviour (place the caret where the mouse is / collapse the selection) would immediately
+  // undo the `select()` made in the focus handler below. A *second* click on an already-focused
+  // input never sets this (no focus event fires), so its mouseup is left alone and the caret
+  // places normally — "select on focus, not on every click".
+  const selectOnMouseUpTarget = useRef<HTMLInputElement | null>(null);
 
   const reload = useCallback(async () => {
     if (examId === null) {
@@ -199,7 +238,11 @@ export default function PointsEntryPage(): JSX.Element {
       setExam(examDetail);
       setExamMessages([]);
       setGrid(pointsGrid);
-      setRows(pointsGrid.entries.map((entry) => toEditableRow(entry, pointsGrid.exercises)));
+      const mappedRows = pointsGrid.entries.map((entry) => toEditableRow(entry, pointsGrid.exercises));
+      setRows(mappedRows);
+      const bonusField = computeBonusField(mappedRows);
+      setBonusFieldText(bonusField.text);
+      setBonusMixedCount(bonusField.mixedCount);
       setGridMessages([]);
       setDirty(false);
       setSaveWarnings([]);
@@ -257,12 +300,17 @@ export default function PointsEntryPage(): JSX.Element {
     setSaveWarnings([]);
   }
 
-  function updateBonus(registrationId: number, text: string): void {
-    setRows((prev) =>
-      prev.map((row) =>
-        row.registrationId === registrationId ? { ...row, bonusPointsText: text } : row,
-      ),
-    );
+  /** The single, exam-wide bonus field's edit handler: fans the typed text out to *every* row's
+   * `bonusPointsText` — including rows hidden by the current course filter, same "state holds
+   * every row" convention as `buildSavePayload` — and clears the mixed-value hint, since after
+   * this edit every row shares one value by construction. Fanning out on every keystroke (rather
+   * than on blur) keeps what's on screen always matching what a save would send; `bonus_points`
+   * itself stays per-registration in the database and on the wire (§7.3), this is presentation
+   * only. */
+  function updateBonusAll(text: string): void {
+    setBonusFieldText(text);
+    setBonusMixedCount(null);
+    setRows((prev) => prev.map((row) => ({ ...row, bonusPointsText: text })));
     setDirty(true);
     setSavedNotice(false);
     setSaveWarnings([]);
@@ -293,10 +341,41 @@ export default function PointsEntryPage(): JSX.Element {
     else cellRefs.current.set(key, el);
   }
 
+  /** Selects an input's full contents, so typing immediately replaces the previous value instead
+   * of inserting at wherever the cursor happened to land. One helper, reused for both arrival
+   * paths: the keyboard column-navigation below (landing on a cell via Enter/Arrow) and the
+   * point/bonus inputs' `onFocus` (landing via a mouse click or Tab) — see those call sites
+   * rather than duplicating this. */
+  function selectContents(el: HTMLInputElement): void {
+    el.select();
+  }
+
+  /** Runs `select()` on arrival via mouse/Tab. Paired with `onCellMouseDown`/`onCellMouseUp`
+   * below: without that pair, a real click's mouseup fires *after* this and would silently
+   * collapse the selection back to a caret (mousedown -> focus -> **mouseup**), which the
+   * keyboard-navigation path (Enter/Arrow, no mouse involved at all) never had to worry about. */
+  function onSelectableFocus(event: FocusEvent<HTMLInputElement>): void {
+    selectContents(event.currentTarget);
+  }
+
+  function onSelectableMouseDown(event: MouseEvent<HTMLInputElement>): void {
+    const el = event.currentTarget;
+    // Only a click that is *about* to move focus here needs its mouseup swallowed; a click on an
+    // already-focused input must place the caret normally, or editing part of a value would be
+    // impossible.
+    selectOnMouseUpTarget.current = document.activeElement === el ? null : el;
+  }
+
+  function onSelectableMouseUp(event: MouseEvent<HTMLInputElement>): void {
+    if (selectOnMouseUpTarget.current === event.currentTarget) {
+      event.preventDefault();
+      selectOnMouseUpTarget.current = null;
+    }
+  }
+
   /** Walks in `direction` from `startRowIndex`, skipping disabled (not-attended) cells, and
    * focuses + selects the first enabled one it finds — so entering one exercise down a column
-   * doesn't dead-end at the first not-attended student. Selecting the text on arrival is what
-   * makes "typing over a focused cell replaces its content" true. */
+   * doesn't dead-end at the first not-attended student. */
   function focusCell(
     exerciseId: number,
     startRowIndex: number,
@@ -308,7 +387,7 @@ export default function PointsEntryPage(): JSX.Element {
       const el = cellRefs.current.get(cellKey(exerciseId, rowIndex));
       if (el !== undefined && !el.disabled) {
         el.focus();
-        el.select();
+        selectContents(el);
         return;
       }
       rowIndex += direction;
@@ -352,7 +431,11 @@ export default function PointsEntryPage(): JSX.Element {
       // Re-seed from the server's recomputed rows rather than merging only the grade back in —
       // the server is authoritative (§8) for canonicalised values (e.g. a percentage-typed
       // "3," the instructor never finished) too, not just for the grade.
-      setRows(saved.entries.map((entry) => toEditableRow(entry, grid.exercises)));
+      const mappedRows = saved.entries.map((entry) => toEditableRow(entry, grid.exercises));
+      setRows(mappedRows);
+      const bonusField = computeBonusField(mappedRows);
+      setBonusFieldText(bonusField.text);
+      setBonusMixedCount(bonusField.mixedCount);
       setDirty(false);
       setSavedNotice(true);
       // Batch-level, not per-row (see BulkPointsSaveResult) — e.g. a value above an exercise's
@@ -382,6 +465,30 @@ export default function PointsEntryPage(): JSX.Element {
     () => (courseFilter === "" ? rows : rows.filter((row) => row.courseCode === courseFilter)),
     [rows, courseFilter],
   );
+
+  // Scoped to the currently visible (filter-respecting) rows, same as the bulk action below —
+  // a table-header bulk control acting on rows the instructor can't currently see would be
+  // surprising.
+  const unrecordedVisibleCount = useMemo(
+    () => visibleRows.filter((row) => row.attended === null).length,
+    [visibleRows],
+  );
+
+  /** Sets every currently visible row whose attendance is still `null` to `true` — never touches
+   * a row already explicitly `false`, so confirming this dialog can't silently turn a recorded
+   * absence into a presence (the dialog's own text says the same thing to the instructor). */
+  function applyBulkAttendance(): void {
+    const targetIds = new Set(
+      visibleRows.filter((row) => row.attended === null).map((row) => row.registrationId),
+    );
+    if (targetIds.size === 0) return;
+    setRows((prev) =>
+      prev.map((row) => (targetIds.has(row.registrationId) ? { ...row, attended: true } : row)),
+    );
+    setDirty(true);
+    setSavedNotice(false);
+    setSaveWarnings([]);
+  }
 
   // A compact, row-height-preserving alternative to a field-error span under every offending
   // cell (which would blow up a dense grid's row height): the cell itself is marked (border +
@@ -416,6 +523,8 @@ export default function PointsEntryPage(): JSX.Element {
       </section>
     );
   }
+
+  const bonusModeOption = BONUS_MODE_OPTIONS.find((option) => option.value === grid.bonus_mode);
 
   return (
     <section>
@@ -458,6 +567,16 @@ export default function PointsEntryPage(): JSX.Element {
             ))}
           </select>
         </div>
+        <div>
+          <button
+            type="button"
+            disabled={unrecordedVisibleCount === 0}
+            onClick={() => setShowBulkAttendDialog(true)}
+            data-testid="bulk-mark-present"
+          >
+            Alle als anwesend markieren
+          </button>
+        </div>
         <div className="button-row">
           <button
             type="button"
@@ -474,6 +593,64 @@ export default function PointsEntryPage(): JSX.Element {
           ) : null}
         </div>
       </div>
+
+      {showBulkAttendDialog ? (
+        <ConfirmDialog
+          title="Alle als anwesend markieren?"
+          confirmLabel="Anwenden"
+          onCancel={() => setShowBulkAttendDialog(false)}
+          onConfirm={() => {
+            applyBulkAttendance();
+            setShowBulkAttendDialog(false);
+          }}
+        >
+          <p>
+            Dies markiert <strong>{unrecordedVisibleCount}</strong>{" "}
+            {unrecordedVisibleCount === 1
+              ? "Studierende bzw. Studierenden, deren Anwesenheit noch nicht erfasst ist,"
+              : "Studierende, deren Anwesenheit noch nicht erfasst ist,"}{" "}
+            als anwesend
+            {courseFilter !== "" ? (
+              <>
+                {" "}
+                — beschränkt auf den aktuell gefilterten Studiengang „{courseFilter}“
+              </>
+            ) : null}
+            . Bereits als „nicht anwesend“ erfasste Studierende werden dabei{" "}
+            <strong>nicht</strong> verändert.
+          </p>
+        </ConfirmDialog>
+      ) : null}
+
+      <fieldset className="points-grid-bonus">
+        <legend>Bonuspunkte</legend>
+        <div className="field">
+          <label htmlFor="bonus-all">Bonuspunkte (für alle Studierenden)</label>
+          <input
+            id="bonus-all"
+            type="text"
+            inputMode="decimal"
+            className="narrow"
+            data-testid="bonus-all"
+            value={bonusFieldText}
+            placeholder={bonusMixedCount !== null ? "uneinheitlich" : undefined}
+            onChange={(event) => updateBonusAll(event.target.value)}
+            onFocus={onSelectableFocus}
+            onMouseDown={onSelectableMouseDown}
+            onMouseUp={onSelectableMouseUp}
+          />
+        </div>
+        {bonusMixedCount !== null ? (
+          <p className="muted small" data-testid="bonus-mixed-hint">
+            Aktuell sind {bonusMixedCount} unterschiedliche Bonuspunkte-Werte hinterlegt (z. B.
+            durch frühere Eingaben oder eine übernommene Klausur) — das Feld bleibt deshalb leer.
+            Eine Eingabe hier setzt den Wert für <strong>alle</strong> Studierenden.
+          </p>
+        ) : null}
+        {bonusModeOption !== undefined ? (
+          <p className="explanation">{bonusModeOption.explanation}</p>
+        ) : null}
+      </fieldset>
 
       <div data-testid="grid-errors">
         <ErrorList
@@ -527,15 +704,12 @@ export default function PointsEntryPage(): JSX.Element {
                 <th scope="col">Vers.</th>
                 <th scope="col">Anwesenheit</th>
                 {grid.exercises.map((exercise) => (
-                  <th scope="col" key={exercise.id} className="numeric-cell">
+                  <th scope="col" key={exercise.id} className="numeric-cell exercise-header">
                     {exercise.name}
                     <br />
                     <span className="muted small">max. {formatDecimal(exercise.max_points)}</span>
                   </th>
                 ))}
-                <th scope="col" className="numeric-cell">
-                  Bonus
-                </th>
                 <th scope="col" className="numeric-cell">
                   Summe
                 </th>
@@ -570,18 +744,32 @@ export default function PointsEntryPage(): JSX.Element {
                     </td>
                     <td className="numeric-cell">{row.versuch}</td>
                     <td>
-                      <select
+                      <div
+                        className="attendance-radio-group"
+                        role="radiogroup"
                         aria-label={`Anwesenheit ${row.vorname} ${row.nachname}`}
-                        data-testid={`attended-${row.registrationId}`}
-                        value={attendedToOption(row.attended)}
-                        onChange={(event) =>
-                          updateAttended(row.registrationId, optionToAttended(event.target.value))
-                        }
                       >
-                        <option value="unknown">Nicht erfasst</option>
-                        <option value="present">Anwesend</option>
-                        <option value="absent">Nicht anwesend</option>
-                      </select>
+                        <label>
+                          <input
+                            type="radio"
+                            name={`attended-${row.registrationId}`}
+                            data-testid={`attended-${row.registrationId}-present`}
+                            checked={row.attended === true}
+                            onChange={() => updateAttended(row.registrationId, true)}
+                          />{" "}
+                          anwesend
+                        </label>
+                        <label>
+                          <input
+                            type="radio"
+                            name={`attended-${row.registrationId}`}
+                            data-testid={`attended-${row.registrationId}-absent`}
+                            checked={row.attended === false}
+                            onChange={() => updateAttended(row.registrationId, false)}
+                          />{" "}
+                          nicht anwesend
+                        </label>
+                      </div>
                     </td>
                     {grid.exercises.map((exercise) => {
                       const text = row.pointsText[String(exercise.id)] ?? "";
@@ -607,6 +795,9 @@ export default function PointsEntryPage(): JSX.Element {
                             onKeyDown={(event) =>
                               onCellKeyDown(exercise.id, rowIndex, visibleRows.length, event)
                             }
+                            onFocus={onSelectableFocus}
+                            onMouseDown={onSelectableMouseDown}
+                            onMouseUp={onSelectableMouseUp}
                             ref={(el) => registerCellRef(exercise.id, rowIndex, el)}
                           />
                           {exceeds ? (
@@ -617,17 +808,6 @@ export default function PointsEntryPage(): JSX.Element {
                         </td>
                       );
                     })}
-                    <td className="numeric-cell">
-                      <input
-                        type="text"
-                        inputMode="decimal"
-                        className="bonus-input"
-                        aria-label={`Bonuspunkte für ${row.vorname} ${row.nachname}`}
-                        data-testid={`bonus-${row.registrationId}`}
-                        value={row.bonusPointsText}
-                        onChange={(event) => updateBonus(row.registrationId, event.target.value)}
-                      />
-                    </td>
                     <td className="numeric-cell" data-testid={`total-${row.registrationId}`}>
                       {preview.finalTotal === null ? EMPTY_DISPLAY : formatDecimal(preview.finalTotal)}
                     </td>
