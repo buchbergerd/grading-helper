@@ -19,16 +19,19 @@ the empty string. Responses preserve the stored representation exactly, trailing
 ## Auth (§3)
 
 Session is a DB-backed opaque token in an **HttpOnly, SameSite=Lax** cookie (`gh_session`),
-12 h absolute expiry. Not JWT: §3 requires account deactivation and password reset to take
-effect immediately, which needs server-side revocation. All non-auth routes require a valid
-session; the frontend never reads the cookie.
+24 h lifetime as a **sliding window**: every request through `current_session` (i.e. every
+authenticated request, not just login) pushes the server-side `expires_at` and the cookie's
+`Max-Age` out to a fresh 24 h (§14 #12) — an instructor working continuously is never logged out
+mid-session; 24 h of inactivity still expires it. Not JWT: §3 requires account deactivation and
+password reset to take effect immediately, which needs server-side revocation. All non-auth
+routes require a valid session; the frontend never reads the cookie.
 
 | Method | Path | Body | Response |
 |---|---|---|---|
 | POST | `/api/auth/login` | `{username, password}` | `200` + sets cookie, `{id, username, is_admin}`; `401` on bad credentials **or** deactivated account (same message either way — don't reveal which) |
 | POST | `/api/auth/logout` | — | `204`, deletes the session row and clears the cookie. **Idempotent**: also `204` with a missing, expired or already-revoked cookie — a `401` here would strand a dead cookie in the browser with no way to clear it |
 | GET | `/api/auth/me` | — | `{id, username, is_admin}`; `401` if no/expired session |
-| POST | `/api/auth/password` | `{current_password, new_password}` | `204` — self-service change; verifies `current_password` |
+| POST | `/api/auth/password` | `{current_password, new_password}` | `204` — self-service change; verifies `current_password`; `422` + `{"detail": {"errors": [German strings]}}` if the new password fails policy (§14 #13/#14 — same shape as grading-schema validation errors, the app's one shape for "show these German messages verbatim") |
 
 ## Account management (admin only, §3)
 
@@ -38,9 +41,9 @@ Non-admins get `403` here (existence of the admin API is not secret; individual 
 | Method | Path | Body | Response |
 |---|---|---|---|
 | GET | `/api/admin/users` | — | `[{id, username, is_admin, is_active, created_at}]` |
-| POST | `/api/admin/users` | `{username, password, is_admin?}` | `201` + user; `409` if username taken |
+| POST | `/api/admin/users` | `{username, password, is_admin?}` | `201` + user; `409` if username taken; `422` + `{"detail": {"errors": [...]}}` on a policy-failing password (§14 #13/#14) |
 | PATCH | `/api/admin/users/{id}` | `{is_active?, is_admin?}` | `200` + user. Deactivating **also deletes that user's sessions** (immediate revocation). An admin cannot deactivate or demote their own account (prevents locking the last admin out) → `400` |
-| POST | `/api/admin/users/{id}/password` | `{new_password}` | `204` — reset; also deletes that user's sessions |
+| POST | `/api/admin/users/{id}/password` | `{new_password}` | `204` — reset; also deletes that user's sessions; same `422` shape as above on policy failure |
 
 ## Lectures (§4)
 

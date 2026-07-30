@@ -12,9 +12,10 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, HTTPException, Request, Response, status
 from sqlalchemy.orm import Session
 
+from app.auth.cookies import set_session_cookie
 from app.auth.sessions import get_valid_session
 from app.config import get_settings
 from app.db import get_db
@@ -28,14 +29,20 @@ FORBIDDEN_DETAIL = "Diese Aktion erfordert Administratorrechte."
 DbSession = Annotated[Session, Depends(get_db)]
 
 
-def current_session(request: Request, db: DbSession) -> UserSession:
-    """Resolve the session cookie to a valid :class:`UserSession`, or raise ``401``."""
+def current_session(request: Request, response: Response, db: DbSession) -> UserSession:
+    """Resolve the session cookie to a valid :class:`UserSession`, or raise ``401``.
+
+    ``get_valid_session`` already pushed the session's ``expires_at`` out to a fresh lifetime
+    (§12's sliding window); re-setting the cookie here matches its ``max_age`` to that, so an
+    instructor actively working never hits either the server-side or the browser-side expiry.
+    """
     token = request.cookies.get(get_settings().session_cookie_name)
     session = get_valid_session(db, token) if token else None
     if session is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail=NOT_AUTHENTICATED_DETAIL
         )
+    set_session_cookie(response, session.token)
     return session
 
 

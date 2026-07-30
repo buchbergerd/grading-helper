@@ -73,6 +73,12 @@ def get_valid_session(db: Session, token: str) -> UserSession | None:
     ``None`` covers all three rejection cases without distinguishing them to the caller: no such
     token, the token has expired, or the owning account has been deactivated (§3 — deactivation
     must take effect immediately, including for sessions issued before it).
+
+    A session that is still valid has its ``expires_at`` pushed out to a fresh full lifetime from
+    *now* (§12: a sliding window, "24h that refresh on activity", not a fixed 24h-from-login
+    expiry) — every validated request counts as activity, so an instructor working continuously
+    is never logged out mid-session. :func:`~app.auth.dependencies.current_session` refreshes the
+    cookie's ``max_age`` to match on the same request.
     """
     if not token:
         return None
@@ -84,6 +90,8 @@ def get_valid_session(db: Session, token: str) -> UserSession | None:
     user = db.get(User, session.user_id)
     if user is None or not user.is_active:
         return None
+    session.expires_at = utcnow() + timedelta(hours=get_settings().session_lifetime_hours)
+    db.commit()
     return session
 
 

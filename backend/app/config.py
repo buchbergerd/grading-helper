@@ -18,7 +18,7 @@ _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
 _FALSE_VALUES = frozenset({"0", "false", "no", "off", ""})
 
 DEFAULT_DATABASE_URL = "sqlite:///./data/gradinghelper.db"
-DEFAULT_SESSION_LIFETIME_HOURS = 12
+DEFAULT_SESSION_LIFETIME_HOURS = 24
 DEFAULT_SESSION_COOKIE_NAME = "gh_session"
 DEFAULT_COOKIE_SECURE = False
 

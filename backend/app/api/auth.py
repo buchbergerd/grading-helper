@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Response, status
 from sqlalchemy import select
 
 from app.api.schemas import LoginRequest, PasswordChangeRequest, UserIdentity
+from app.auth.cookies import clear_session_cookie, set_session_cookie
 from app.auth.dependencies import CurrentSession, CurrentUser, DbSession, OptionalSession
 from app.auth.passwords import (
     DUMMY_HASH,
@@ -18,13 +19,7 @@ from app.auth.passwords import (
     validate_password_strength,
     verify_password,
 )
-from app.auth.sessions import (
-    create_session,
-    delete_all_sessions_for_user,
-    delete_session,
-    session_lifetime_seconds,
-)
-from app.config import get_settings
+from app.auth.sessions import create_session, delete_all_sessions_for_user, delete_session
 from app.models import User
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -34,36 +29,6 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 #: that a named colleague's account has been disabled.
 INVALID_CREDENTIALS_DETAIL = "Benutzername oder Passwort ist falsch."
 WRONG_CURRENT_PASSWORD_DETAIL = "Das aktuelle Passwort ist falsch."
-
-
-def set_session_cookie(response: Response, token: str) -> None:
-    """Attach the session cookie.
-
-    ``httponly`` keeps the token out of reach of any JavaScript (the frontend never reads it);
-    ``samesite="lax"`` blocks cross-site POSTs from carrying it, which is this milestone's CSRF
-    defence; ``secure`` follows the deployment (plain HTTP behind the department's TLS-
-    terminating proxy by default — see ``app/config.py``).
-    """
-    response.set_cookie(
-        key=get_settings().session_cookie_name,
-        value=token,
-        max_age=session_lifetime_seconds(),
-        httponly=True,
-        samesite="lax",
-        secure=get_settings().cookie_secure,
-        path="/",
-    )
-
-
-def clear_session_cookie(response: Response) -> None:
-    """Expire the session cookie. Attributes must match :func:`set_session_cookie` to match."""
-    response.delete_cookie(
-        key=get_settings().session_cookie_name,
-        httponly=True,
-        samesite="lax",
-        secure=get_settings().cookie_secure,
-        path="/",
-    )
 
 
 @router.post("/login", response_model=UserIdentity)

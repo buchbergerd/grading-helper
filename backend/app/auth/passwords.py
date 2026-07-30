@@ -19,7 +19,7 @@ from argon2.exceptions import InvalidHashError, VerificationError
 #: Minimum password length. This is an internal departmental tool with admin-created accounts
 #: and no public signup (§3), so length is the only rule: composition rules ("must contain a
 #: digit") push users towards predictable substitutions without adding real entropy.
-MIN_PASSWORD_LENGTH = 12
+MIN_PASSWORD_LENGTH = 8
 
 _hasher = PasswordHasher()
 

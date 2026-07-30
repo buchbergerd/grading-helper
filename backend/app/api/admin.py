@@ -89,7 +89,7 @@ def update_user(user_id: int, payload: UserUpdateRequest, admin: AdminUser, db: 
     entirely, recoverable only by running ``scripts/create_admin.py`` on the server.
 
     Deactivation deletes the account's sessions, so it takes effect on the next request rather
-    than whenever the victim's 12 h cookie happens to expire (§3).
+    than whenever the victim's 24 h sliding-expiry cookie would otherwise expire (§3).
     """
     user = _get_user_or_404(db, user_id)
 

@@ -32,7 +32,7 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
       setUser(await apiMe());
     } catch (error) {
       // A 401 from /api/auth/me is the normal "no session" answer, not a failure: it happens
-      // on every first visit and after the 12 h expiry. It must never surface as an error
+      // on every first visit and after the 24 h sliding expiry. It must never surface as an error
       // message. Anything else is a real problem, but there is nothing useful the user can do
       // about it here either, so we still fall back to "logged out" and let the login page
       // report the next failure.

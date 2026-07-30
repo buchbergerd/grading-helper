@@ -150,6 +150,26 @@ def test_get_valid_session_rejects_unknown_expired_and_inactive(
     assert get_valid_session(session, live.token) is None
 
 
+def test_get_valid_session_slides_expiry_forward(session: Session, stored_user: User) -> None:
+    """§12: a session's lifetime is a sliding window, refreshed on every validated use.
+
+    An about-to-expire session must still be usable an hour later purely because it was
+    validated in between — a fixed expiry counted from login would reject it.
+    """
+    from app.config import get_settings
+
+    live = create_session(session, stored_user)
+    live.expires_at = utcnow() + timedelta(minutes=5)
+    session.commit()
+
+    assert get_valid_session(session, live.token) is not None
+
+    refreshed = session.get(UserSession, live.token)
+    assert refreshed is not None
+    lifetime = timedelta(hours=get_settings().session_lifetime_hours)
+    assert abs((refreshed.expires_at - utcnow()) - lifetime) < timedelta(seconds=5)
+
+
 def test_delete_session_and_delete_all_sessions(session: Session, stored_user: User) -> None:
     first = create_session(session, stored_user).token
     second = create_session(session, stored_user).token
@@ -268,6 +288,23 @@ def test_logout_is_idempotent_without_a_valid_session(client: TestClient, cookie
 
 def test_me_requires_a_session(client: TestClient) -> None:
     assert client.get("/api/auth/me").status_code == 401
+
+
+def test_authenticated_requests_refresh_the_session_cookie(
+    client: TestClient, instructor_user: User, cookie_name: str
+) -> None:
+    """§12: opening any page (i.e. making any authenticated request) slides the cookie forward.
+
+    A stale ``Max-Age`` counted only from login would let the browser drop the cookie mid-session
+    even though the server-side session is still being used continuously.
+    """
+    client.post("/api/auth/login", json={"username": "dozentin", "password": INSTRUCTOR_PASSWORD})
+
+    me = client.get("/api/auth/me")
+    assert me.status_code == 200
+    set_cookie = me.headers.get("set-cookie", "")
+    assert cookie_name in set_cookie
+    assert "Max-Age=86400" in set_cookie
 
 
 def test_wrong_password_and_unknown_user_give_the_identical_401(
