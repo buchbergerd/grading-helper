@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
   type FocusEvent,
+  type JSX,
   type KeyboardEvent,
   type MouseEvent,
 } from "react";

@@ -622,6 +622,13 @@ describe("ExamStatisticsPage — charts actually render", () => {
       </MemoryRouter>,
     );
     await screen.findByRole("heading", { name: "Kennzahlen" });
+    // Recharts' `ResponsiveContainer` measures its box in a `useEffect`, one macrotask after
+    // mount — `findByRole` above only guarantees the initial render, not that resize effect.
+    // Without this wait, the first assertion after `renderCharts()` races it and intermittently
+    // sees 0×0 charts (no `.recharts-wrapper` at all, not just empty ones).
+    await waitFor(() => {
+      expect(container.querySelectorAll(".recharts-wrapper").length).toBeGreaterThan(0);
+    });
     return container;
   }
 

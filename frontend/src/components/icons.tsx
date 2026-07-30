@@ -7,6 +7,8 @@
  * inner `<title>` here would give the button a doubled/ambiguous accessible name.
  */
 
+import type { JSX } from "react";
+
 const commonProps = {
   width: 16,
   height: 16,

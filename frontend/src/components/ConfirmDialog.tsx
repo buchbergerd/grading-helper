@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, type JSX, type ReactNode } from "react";
 
 /**
  * Blocking confirmation for destructive actions. Deleting a lecture or an exam cascades to

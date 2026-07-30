@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type FormEvent, type JSX } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { createExam, errorMessages, getLecture, type LectureDetail } from "../api/client";

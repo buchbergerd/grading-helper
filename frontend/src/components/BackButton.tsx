@@ -1,4 +1,4 @@
-import type { MouseEvent } from "react";
+import type { JSX, MouseEvent } from "react";
 import { Link } from "react-router-dom";
 
 import { IconBack } from "./icons";

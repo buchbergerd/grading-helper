@@ -7,6 +7,7 @@ import {
   useState,
   type ChangeEvent,
   type FormEvent,
+  type JSX,
 } from "react";
 import { Link, useParams } from "react-router-dom";
 

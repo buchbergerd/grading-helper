@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { JSX, ReactNode } from "react";
 
 /**
  * Renders German error messages. Server messages (the section 7.2 validation texts, the login

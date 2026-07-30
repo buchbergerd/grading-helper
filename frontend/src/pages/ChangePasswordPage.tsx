@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useState, type FormEvent, type JSX } from "react";
 
 import { changePassword, errorMessages } from "../api/client";
 import { ErrorList, SuccessNotice } from "../components/Messages";
