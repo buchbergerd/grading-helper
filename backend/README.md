@@ -33,6 +33,19 @@ uv run pytest
 uv run uvicorn app.main:app --reload
 ```
 
+## Dev-server default accounts
+
+The local dev/test SQLite database (`backend/data/gradinghelper.db`) currently has these
+accounts for manual testing. These are **not** created by any script or migration — they exist
+only in this developer's local DB and must never be assumed present elsewhere (a fresh DB has no
+users until `scripts/create_admin.py` is run). Do not reuse this password scheme on a real
+deployment.
+
+| username | password | admin |
+|----------|----------|-------|
+| `admin`  | `12345678` | yes |
+| `test`   | `12345678` | no |
+
 ## Non-negotiable constraints
 
 See `/CLAUDE.md` — in particular: `Decimal` end-to-end for all points/percentage/threshold
