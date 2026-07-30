@@ -9,17 +9,19 @@ code — do not rely on a summary of it, including this one.** This file does no
 spec; it only points at it and lists the constraints an implementation is most likely to violate
 silently. If this file and the spec ever disagree, the spec wins — fix this file.
 
-Current status: **milestones 1–4 (§15.1–§15.4) complete, backend and frontend** — data model,
+Current status: **milestones 1–5 (§15.1–§15.5) complete, backend and frontend** — data model,
 auth/accounts, Lecture/Exam CRUD, registration-PDF import, attendance-list PDF, the grading
 engine (`app/grading/engine.py`), the points/attendance API (`app/api/points.py`), the §9
-internal report (`app/statistics.py` → Typst PDF + React dashboard), and the React UI over all of
-it including the spreadsheet-style points grid. §7.5's worked example passes as engine unit
-tests, end-to-end through HTTP, and through the statistics module.
+internal report (`app/statistics.py` → Typst PDF + React dashboard), the §10/§11 examination-
+office and student-results reports (PDF + Excel, both gated on §8.1 completeness plus a fully
+configured grading schema — see `docs/open-questions.md` item 22 — via
+`app/api/reports.py::_require_exportable`), and the React UI over all of it including the
+spreadsheet-style points grid and the report-download buttons on the points-entry page. §7.5's
+worked example passes as engine unit tests, end-to-end through HTTP, and through the statistics
+module.
 
-**Next up: §15.5** — the examination-office and student-results reports (PDF + Excel), both
-gated on §8.1's completeness check. Then §15.6 (copy-forward, exam deletion, Docker packaging).
-`SPECIFICATION.md` §15 gives the intended build order — follow it rather than jumping to
-whichever feature seems easiest.
+**Next up: §15.6** — copy-forward, exam deletion, Docker packaging. `SPECIFICATION.md` §15 gives
+the intended build order — follow it rather than jumping to whichever feature seems easiest.
 
 **§9's one-module rule outlives its milestone.** `app/statistics.py` is the *only* place that
 turns an exam into statistics; `app/reports/internal_report.py` and `app/api/statistics.py` both
