@@ -526,7 +526,7 @@ describe("ExamStatisticsPage — §10/§11 report downloads", () => {
     expect(screen.queryByTestId("schema-not-configured-hint")).toBeNull();
   });
 
-  it("shows a hint instead of the buttons when the exam is complete but the schema isn't configured", async () => {
+  it("shows the buttons greyed out (not hidden) when the exam is complete but the schema isn't configured", async () => {
     renderPage({
       "/api/exams/7/statistics": () => jsonResponse(200, STATS_NO_SCHEMA),
     });
@@ -534,18 +534,20 @@ describe("ExamStatisticsPage — §10/§11 report downloads", () => {
     const hint = await screen.findByTestId("schema-not-configured-hint");
     expect(hint.textContent).toBe("Der Notenschlüssel ist noch nicht vollständig konfiguriert.");
     for (const name of REPORT_BUTTON_NAMES) {
-      expect(screen.queryByRole("button", { name })).toBeNull();
+      const button = (await screen.findByRole("button", { name })) as HTMLButtonElement;
+      expect(button.disabled).toBe(true);
     }
   });
 
-  it("shows neither the buttons nor the schema hint while the exam is still incomplete", async () => {
+  it("shows the buttons greyed out (not hidden) and the incomplete hint while the exam is still incomplete", async () => {
     renderPage({
       "/api/exams/7/completeness": () => jsonResponse(200, COMPLETENESS_INCOMPLETE),
     });
 
     await screen.findByTestId("completeness-incomplete-hint");
     for (const name of REPORT_BUTTON_NAMES) {
-      expect(screen.queryByRole("button", { name })).toBeNull();
+      const button = (await screen.findByRole("button", { name })) as HTMLButtonElement;
+      expect(button.disabled).toBe(true);
     }
     expect(screen.queryByTestId("schema-not-configured-hint")).toBeNull();
   });

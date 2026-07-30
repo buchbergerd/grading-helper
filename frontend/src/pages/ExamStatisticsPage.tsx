@@ -164,6 +164,20 @@ export default function ExamStatisticsPage(): JSX.Element {
 
   const series = buildStatisticsSeries(stats);
 
+  // The four §10/§11 buttons stay visible even when the exam isn't export-ready yet — greyed
+  // out rather than hidden, so instructors always know the reports exist and what's blocking them.
+  const reportButtonsDisabled =
+    completeness === null ||
+    !completeness.is_complete ||
+    !stats.grading_configured ||
+    downloadingReport !== null;
+  const reportButtonsDisabledReason =
+    completeness !== null && !completeness.is_complete
+      ? "Nicht alle Daten sind vollständig."
+      : !stats.grading_configured
+        ? "Der Notenschlüssel ist noch nicht vollständig konfiguriert."
+        : undefined;
+
   return (
     <section>
       <div className="breadcrumb-row">
@@ -206,90 +220,93 @@ export default function ExamStatisticsPage(): JSX.Element {
         </div>
         {completeness === null ? (
           <p className="muted">Wird geladen …</p>
-        ) : completeness.is_complete ? (
+        ) : (
           <>
-            <SuccessNotice>
-              Alle Daten sind vollständig — Offizielle Berichte können erzeugt werden.
-            </SuccessNotice>
-            {stats.grading_configured ? (
-              <>
-                <div data-testid="report-download-errors">
-                  <ErrorList messages={reportDownloadMessages} />
-                </div>
-                <div className="button-row">
-                  <button
-                    type="button"
-                    data-testid="download-examination-office-pdf"
-                    disabled={downloadingReport !== null}
-                    onClick={() =>
-                      void downloadReport("examination-office-pdf", () =>
-                        downloadExaminationOfficePdf(examId),
-                      )
-                    }
-                  >
-                    {downloadingReport === "examination-office-pdf"
-                      ? "Wird erstellt …"
-                      : "Prüfungsamt-Bericht als PDF herunterladen"}
-                  </button>
-                  <button
-                    type="button"
-                    data-testid="download-examination-office-excel"
-                    disabled={downloadingReport !== null}
-                    onClick={() =>
-                      void downloadReport("examination-office-excel", () =>
-                        downloadExaminationOfficeExcel(examId),
-                      )
-                    }
-                  >
-                    {downloadingReport === "examination-office-excel"
-                      ? "Wird erstellt …"
-                      : "Prüfungsamt-Bericht als Excel herunterladen"}
-                  </button>
-                  <button
-                    type="button"
-                    data-testid="download-student-results-pdf"
-                    disabled={downloadingReport !== null}
-                    onClick={() =>
-                      void downloadReport("student-results-pdf", () =>
-                        downloadStudentResultsPdf(examId),
-                      )
-                    }
-                  >
-                    {downloadingReport === "student-results-pdf"
-                      ? "Wird erstellt …"
-                      : "Notenliste als PDF herunterladen"}
-                  </button>
-                  <button
-                    type="button"
-                    data-testid="download-student-results-excel"
-                    disabled={downloadingReport !== null}
-                    onClick={() =>
-                      void downloadReport("student-results-excel", () =>
-                        downloadStudentResultsExcel(examId),
-                      )
-                    }
-                  >
-                    {downloadingReport === "student-results-excel"
-                      ? "Wird erstellt …"
-                      : "Notenliste als Excel herunterladen"}
-                  </button>
-                </div>
-              </>
+            {completeness.is_complete ? (
+              <SuccessNotice>
+                Alle Daten sind vollständig — Offizielle Berichte können erzeugt werden.
+              </SuccessNotice>
             ) : (
+              <p className="muted small" data-testid="completeness-incomplete-hint">
+                <strong>{completeness.incomplete_count}</strong>{" "}
+                {completeness.incomplete_count === 1
+                  ? "Studierende bzw. Studierender ist"
+                  : "Studierende sind"}{" "}
+                noch unvollständig — Details dazu auf der{" "}
+                <Link to={`/klausuren/${examId}/punkte`}>Punkte-Seite</Link>.
+              </p>
+            )}
+            {!stats.grading_configured ? (
               <p className="muted small" data-testid="schema-not-configured-hint">
                 Der Notenschlüssel ist noch nicht vollständig konfiguriert.
               </p>
-            )}
+            ) : null}
+            <div data-testid="report-download-errors">
+              <ErrorList messages={reportDownloadMessages} />
+            </div>
+            <div className="button-row">
+              <button
+                type="button"
+                data-testid="download-examination-office-pdf"
+                disabled={reportButtonsDisabled}
+                title={reportButtonsDisabledReason}
+                onClick={() =>
+                  void downloadReport("examination-office-pdf", () =>
+                    downloadExaminationOfficePdf(examId),
+                  )
+                }
+              >
+                {downloadingReport === "examination-office-pdf"
+                  ? "Wird erstellt …"
+                  : "Prüfungsamt-Bericht als PDF herunterladen"}
+              </button>
+              <button
+                type="button"
+                data-testid="download-examination-office-excel"
+                disabled={reportButtonsDisabled}
+                title={reportButtonsDisabledReason}
+                onClick={() =>
+                  void downloadReport("examination-office-excel", () =>
+                    downloadExaminationOfficeExcel(examId),
+                  )
+                }
+              >
+                {downloadingReport === "examination-office-excel"
+                  ? "Wird erstellt …"
+                  : "Prüfungsamt-Bericht als Excel herunterladen"}
+              </button>
+              <button
+                type="button"
+                data-testid="download-student-results-pdf"
+                disabled={reportButtonsDisabled}
+                title={reportButtonsDisabledReason}
+                onClick={() =>
+                  void downloadReport("student-results-pdf", () =>
+                    downloadStudentResultsPdf(examId),
+                  )
+                }
+              >
+                {downloadingReport === "student-results-pdf"
+                  ? "Wird erstellt …"
+                  : "Notenliste als PDF herunterladen"}
+              </button>
+              <button
+                type="button"
+                data-testid="download-student-results-excel"
+                disabled={reportButtonsDisabled}
+                title={reportButtonsDisabledReason}
+                onClick={() =>
+                  void downloadReport("student-results-excel", () =>
+                    downloadStudentResultsExcel(examId),
+                  )
+                }
+              >
+                {downloadingReport === "student-results-excel"
+                  ? "Wird erstellt …"
+                  : "Notenliste als Excel herunterladen"}
+              </button>
+            </div>
           </>
-        ) : (
-          <p className="muted small" data-testid="completeness-incomplete-hint">
-            <strong>{completeness.incomplete_count}</strong>{" "}
-            {completeness.incomplete_count === 1
-              ? "Studierende bzw. Studierender ist"
-              : "Studierende sind"}{" "}
-            noch unvollständig — Details dazu auf der{" "}
-            <Link to={`/klausuren/${examId}/punkte`}>Punkte-Seite</Link>.
-          </p>
         )}
       </div>
 
