@@ -1,5 +1,24 @@
 # Backend scripts
 
+## `generate_demo_data.py`
+
+Fills an exam already sitting in the local dev database (e.g. one created through the UI and
+imported from a registration PDF) with random attendance, per-exercise points and bonus points,
+so the points grid, statistics dashboard and reports have something realistic to show.
+
+```
+cd backend
+uv run python scripts/generate_demo_data.py            # the one exam in the DB
+uv run python scripts/generate_demo_data.py --exam-id 1 --seed 42   # pick one, reproducibly
+```
+
+Deliberately not deterministic by default and not a `test_data/` fixture: it mutates whatever
+local dev database `app/config.py` points at, in place, and nothing it produces is committed.
+Mostly marks students attended with plausible per-student point totals, but always leaves a few
+rows incomplete (unattended, attendance not yet recorded, or missing one exercise) and lets a
+few scores exceed `max_points` — the §8.1 completeness gate and the over-max warning path both
+need something to actually catch, not an artificially complete dataset.
+
 ## `create_admin.py`
 
 Creates an admin account (SPECIFICATION.md §3). See the module docstring for usage.
