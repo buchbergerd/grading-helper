@@ -3,8 +3,10 @@
 How to build, ship and operate GradingHelper on a department server. See `deploy/Dockerfile` and
 `deploy/docker-compose.yml` for the artifacts this guide operates; `SPECIFICATION.md` §13 for the
 deployment requirements they satisfy. Everything below assumes **Linux + Docker + docker
-compose**, reachable only from inside the department network, sitting behind an **existing
-reverse proxy that terminates TLS** — this app itself never speaks TLS or expects a public IP.
+compose**, reachable only from inside the department network. Two topologies are covered:
+sitting behind an **existing reverse proxy that terminates TLS** (the default in
+`docker-compose.yml`, §3 below), and running **plain HTTP directly on the department LAN with no
+proxy at all** (§3a) — this app itself never speaks TLS either way.
 
 ## 1. Prerequisites
 
@@ -75,6 +77,39 @@ reverse proxies cap request body size well below a typical multi-page PDF — ng
 relevant nginx `server`/`location` block) before relying on this in production; otherwise the
 import fails with a proxy-level 413 that has nothing to do with this app's own validation.
 
+## 3a. Alternative: plain HTTP, no reverse proxy, LAN-only
+
+If the department network itself is the trust boundary — server and clients on the same private
+network, no proxy in front — the defaults above don't apply as-is; they assume a proxy is
+terminating TLS. Override three things in `docker-compose.yml`:
+
+```yaml
+services:
+  app:
+    ports:
+      - "8000:8000"     # not 127.0.0.1:8000:8000 — clients aren't on this host
+    environment:
+      GRADINGHELPER_COOKIE_SECURE: "0"   # see step 3's note: "1" here silently breaks login
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    # (drops --proxy-headers --forwarded-allow-ips=* from the image's default CMD — with no
+    # proxy in front, nothing should be trusting X-Forwarded-* from arbitrary LAN clients)
+```
+
+**What this trades away**: without TLS anywhere, login credentials and the session cookie travel
+in cleartext on the network — anyone who can observe that network segment (a shared VLAN, a
+compromised machine on the same subnet, a rogue AP if any leg of the path is Wi-Fi) can read them.
+This is the same trust model §13 assumes for the whole app (network-level protection standing in
+for TLS), just made explicit rather than mediated by a proxy. It is not fixed by hashing the
+password in the browser before sending it: an on-path attacker can either replay the hash
+directly (the hash *is* the credential the server checks, so capturing it is exactly as good as
+capturing the plaintext password, absent a real per-login challenge-response protocol) or simply
+modify the served, unauthenticated-over-HTTP JavaScript to skip the hashing and exfiltrate the raw
+password before it ever gets hashed. Application-layer tricks don't substitute for transport
+security here — the session cookie in particular is the actual bearer credential for every
+request after login, and no client-side hashing scheme touches that at all. If this trade-off
+isn't acceptable, the lightest fix is a self-signed certificate used only within the department
+network (no public CA needed) rather than trying to work around the lack of one.
+
 ## 4. First boot
 
 ```
@@ -138,9 +173,13 @@ ownership (`gradinghelper:gradinghelper`, uid 10001) — so this works with no e
 
 If department policy prefers a host **bind mount** instead (e.g. `./data:/app/data`, to make the
 backup step above simpler or to reuse existing host backup tooling), that directory does **not**
-get Docker's copy-up treatment — it will be owned by whatever created it on the host, typically
-`root`. The container runs as uid 10001 and cannot write to a root-owned directory. Before first
-boot with a bind mount:
+get Docker's copy-up treatment — a bind mount is not Docker-managed storage at all, so it keeps
+whatever ownership it already had on the host (whoever created the directory — often the
+deploying user, sometimes `root` if Docker itself auto-created it on first `up`). Verified
+directly: mounting a host directory owned by a non-10001 user with no chown fails —
+`touch: cannot touch '/app/data/testfile': Permission denied` — every single time, not just under
+some configurations. The container runs as uid 10001 and cannot write to a directory it doesn't
+own or have group/other write access to. Before first boot with a bind mount:
 
 ```
 mkdir -p ./data && sudo chown 10001:10001 ./data
