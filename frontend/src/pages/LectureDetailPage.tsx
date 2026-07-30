@@ -171,7 +171,12 @@ export default function LectureDetailPage(): JSX.Element {
                 />
               </div>
             </div>
-            <button type="submit" className="primary" disabled={creating}>
+            <button
+              type="submit"
+              className="primary"
+              style={{ marginTop: "0.5rem" }}
+              disabled={creating}
+            >
               {creating ? "Wird angelegt …" : "Klausur anlegen"}
             </button>
           </form>
