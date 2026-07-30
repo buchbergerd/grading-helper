@@ -107,8 +107,10 @@ modify the served, unauthenticated-over-HTTP JavaScript to skip the hashing and 
 password before it ever gets hashed. Application-layer tricks don't substitute for transport
 security here — the session cookie in particular is the actual bearer credential for every
 request after login, and no client-side hashing scheme touches that at all. If this trade-off
-isn't acceptable, the lightest fix is a self-signed certificate used only within the department
-network (no public CA needed) rather than trying to work around the lack of one.
+isn't acceptable, `docs/tls-setup.md` writes up two ways to get real TLS without an existing
+department reverse proxy — a self-signed internal CA (manual one-time client trust) or a
+publicly-trusted Let's Encrypt certificate via the DNS-01 challenge (zero client setup, needs a
+DNS name). Neither is wired into this repo yet; that document is a reference to build from.
 
 ## 4. First boot
 
