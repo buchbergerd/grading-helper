@@ -1,24 +1,31 @@
 # Deployment
 
-Skeletons only — fill in once backend/frontend exist. See `/SPECIFICATION.md` §13 for the
-deployment requirements this must satisfy.
+Docker/compose artifacts for a real deployment. See `/docs/deployment.md` for the full runbook
+(build, first boot, admin bootstrap, backups, reverse-proxy config) — this file only describes
+what's in this directory. `/SPECIFICATION.md` §13 is the deployment requirements these satisfy.
 
 ## Files
 
-- `Dockerfile` — multi-stage build (frontend build → backend runtime with typst + fonts baked
-  in). Marked with `TODO`s where real COPY/RUN steps go once there's app code to build.
-- `docker-compose.yml` — single `app` service + a named volume for the SQLite file. No TLS
-  here — assumes an existing department reverse proxy in front (confirm with department IT
-  before going live, per §13).
+- `Dockerfile` — multi-stage build: frontend build (Vite) → backend runtime (FastAPI), serving
+  both from one container (the built frontend is copied into the image and served by
+  `app/main.py`'s SPA-fallback route; there is no separate frontend container/origin). Python
+  deps, the `typst` toolchain (the `typst` PyPI package is a self-contained compiled binary — no
+  separate CLI install needed) and the vendored `cetz`/`cetz-plot` packages are all resolved at
+  build time; nothing is fetched at container start.
+- `docker-compose.yml` — single `app` service + a named volume for the SQLite file. No TLS here
+  — assumes an existing department reverse proxy in front (confirmed setup steps in
+  `/docs/deployment.md`).
 
-## Outstanding before this is real
+## Not handled here, by design (§13)
 
-1. **Vendor `cetz` / `cetz-plot`** into the image at build time (pinned versions), so Typst
-   report rendering never fetches from the `@preview` registry at runtime. Needs a
-   `vendor-typst-packages.sh` (or equivalent) that downloads them once at image-build time and
-   copies them into Typst's package cache path inside the image — not at container start.
-2. Pin a specific `typst` CLI release and install it as a binary in the image.
-3. Decide and document the SQLite backup approach (cron + `sqlite3 .backup`, Litestream, or
-   similar) — explicitly deferred to department ops per §13, but the compose volume above is
-   where it needs to attach.
-4. Non-root user, healthcheck, pinned base-image digests.
+- **SQLite backups**: explicitly deferred to department ops, not this app. `/docs/deployment.md`
+  gives a WAL-safe backup command to build a cron job around.
+- **TLS termination**: assumed to be an existing department reverse proxy in front of this
+  container, which serves plain HTTP only.
+
+## Deliberately deferred, not forgotten
+
+- **Base-image digest pinning** (`python:3.12-slim`, `node:22-slim`): pinned by tag, not digest.
+  A tag can move; a digest can't, at the cost of needing a manual bump whenever a security patch
+  lands upstream. Worth doing once this is a real running deployment someone is responsible for
+  patching — pin both `FROM` lines to `@sha256:...` and note the pinned date in the commit.

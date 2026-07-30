@@ -7,8 +7,10 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 
 from app.api import admin, auth, exams, lectures, points, registrations, reports, statistics
 from app.db import init_db
@@ -54,3 +56,30 @@ app.include_router(reports.router, prefix="/api")
 # The same §9 statistics as JSON for the live dashboard: ``/api/exams/{id}/statistics``. Separate
 # from the reports router, which serves only binary documents.
 app.include_router(statistics.router, prefix="/api")
+
+
+# The built frontend (``npm run build``), copied to ``/app/static`` by ``deploy/Dockerfile`` so
+# one container serves both the API and the SPA (§13: a single self-contained image). Absent in
+# local dev (Vite's own dev server proxies /api instead, see frontend/vite.config.ts) and in
+# tests, so this mounts conditionally rather than failing to start.
+_STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+
+if _STATIC_DIR.is_dir():
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def spa_shell(full_path: str) -> FileResponse:
+        """Serve the built frontend, falling back to ``index.html`` for any path React
+        Router (BrowserRouter) owns client-side — e.g. a hard refresh on ``/lectures/5``
+        must return the SPA shell, not a 404.
+
+        Registered after every ``/api`` router above, so those are matched first and never
+        reach this handler. An unmatched ``/api/...`` path is guarded explicitly below —
+        without it, a typo'd API route would silently 200 with the HTML shell instead of a
+        clean 404.
+        """
+        if full_path == "api" or full_path.startswith("api/"):
+            raise HTTPException(status_code=404)
+        candidate = _STATIC_DIR / full_path
+        if full_path and candidate.is_file():
+            return FileResponse(candidate)
+        return FileResponse(_STATIC_DIR / "index.html")

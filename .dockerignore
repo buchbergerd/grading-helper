@@ -1,0 +1,30 @@
+# Keeps the build context small and, more importantly, keeps things that must never end up in
+# an image out of it — the local dev database in particular (see backend/README.md: it documents
+# real-looking dev credentials that must never reach a shipped image).
+.git
+.github
+
+backend/.venv
+backend/data
+backend/tests
+backend/__pycache__
+backend/**/__pycache__
+backend/.pytest_cache
+backend/.mypy_cache
+backend/.ruff_cache
+# Vendored at build time by scripts/vendor_typst_packages.py — never read from the host.
+backend/app/reports/typst_packages
+
+frontend/node_modules
+frontend/dist
+frontend/.vite
+frontend/**/*.tsbuildinfo
+
+docs
+test_data
+*.md
+!backend/README.md
+
+.env
+.env.*
+!.env.example

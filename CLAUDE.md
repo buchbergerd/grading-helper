@@ -20,7 +20,12 @@ spreadsheet-style points grid and the report-download buttons on the statistics 
 worked example passes as engine unit tests, end-to-end through HTTP, and through the statistics
 module.
 
-**Next up: §15.6** — copy-forward, exam deletion, Docker packaging. `SPECIFICATION.md` §15 gives
+**§15.6 in progress**: Docker packaging is done — `deploy/Dockerfile` and
+`deploy/docker-compose.yml` are real (not skeletons), the frontend is built and served by the
+same container as the API (`app/main.py`'s SPA-fallback route), `typst`/fonts/`cetz`/`cetz-plot`
+are all baked in at build time, the image runs as non-root with a healthcheck, and
+`docs/deployment.md` is the operator-facing runbook. **Still outstanding for §15.6**:
+exam-settings copy-forward and the explicit exam-deletion function. `SPECIFICATION.md` §15 gives
 the intended build order — follow it rather than jumping to whichever feature seems easiest.
 
 **§9's one-module rule outlives its milestone.** `app/statistics.py` is the *only* place that

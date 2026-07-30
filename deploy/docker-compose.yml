@@ -1,18 +1,34 @@
-# Skeleton — see deploy/Dockerfile. Intended to sit behind an existing department reverse
-# proxy (§13): this service serves plain HTTP internally, no TLS/public exposure here.
+# GradingHelper — production compose file. See /docs/deployment.md for the full runbook
+# (first boot, admin bootstrap, backups, reverse-proxy config) — this file alone is not enough
+# to go live.
+#
+# Intended to sit behind an existing department reverse proxy (§13): this service serves plain
+# HTTP internally, no TLS/public exposure here.
 services:
   app:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
+    image: gradinghelper:latest
     ports:
-      - "8000:8000"
+      # Bound to localhost only: the department reverse proxy is assumed to run on this same
+      # host and reach the container via the loopback interface. If the proxy runs on a
+      # different host instead, change this to "8000:8000" and restrict access with a firewall
+      # rule — confirm the network topology with department IT first (§13).
+      - "127.0.0.1:8000:8000"
     volumes:
-      # Persistent SQLite database file — back this volume up (§13: backup strategy is a
-      # department-ops decision, not handled by the app).
+      # Persistent SQLite database file. Back this volume up — §13 leaves the strategy to
+      # department ops; docs/deployment.md gives a WAL-safe example (plain file-copy of a
+      # WAL-mode database yields a torn, unrestorable snapshot).
       - gradinghelper-data:/app/data
     environment:
-      - DATABASE_PATH=/app/data/gradinghelper.db
+      GRADINGHELPER_DATABASE_URL: sqlite:////app/data/gradinghelper.db
+      # The department proxy terminates TLS (§13), so the browser only ever sees HTTPS — the
+      # session cookie should carry Secure. Set this to "0" only if you are deliberately running
+      # without TLS anywhere in front (e.g. an isolated trial network); see docs/deployment.md
+      # for what happens if this and the proxy's TLS setup disagree (silent login failure).
+      GRADINGHELPER_COOKIE_SECURE: "1"
+      # GRADINGHELPER_SESSION_LIFETIME_HOURS: "24"
     restart: unless-stopped
 
 volumes:

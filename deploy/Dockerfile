@@ -1,67 +1,94 @@
-# GradingHelper — production image skeleton.
+# GradingHelper — production image.
 #
-# NOT YET FUNCTIONAL: backend/frontend app code doesn't exist yet (see /SPECIFICATION.md,
-# /CLAUDE.md). This file fixes the shape the build must have so the no-runtime-network
-# constraint (§13) is designed in from the start, not retrofitted:
-#   - typst toolchain and fonts are baked in at build time.
-#   - no `pip install` / `npm install` / typst package fetch may happen at container start.
-#   - Typst's cetz/cetz-plot packages are downloaded and unpacked during the build, never at
-#     runtime (see the vendoring step further down and docs/open-questions.md #17).
+# Two stages: the frontend compiles to static assets, then those land in the backend runtime
+# image next to the FastAPI app. One container serves both the API (under /api) and the SPA
+# (everything else — see app/main.py's spa_shell fallback), which is why the frontend build
+# needs no separate origin/CORS story (frontend/vite.config.ts's dev proxy mirrors this).
 #
-# TODO once app code exists: pin exact base image digests, fill in COPY paths, add a
-# non-root user, healthcheck, and multi-stage layer caching for deps vs. app code.
+# Self-contained at runtime (SPECIFICATION.md §13): Python deps, the typst toolchain (the
+# `typst` PyPI package ships a statically-linked compiled binary — no separate CLI install
+# needed, verified against this repo's dependency) and the vendored cetz/cetz-plot packages are
+# all resolved at BUILD time. The only network access anywhere in this file is the
+# vendor_typst_packages.py step below, and it never runs inside the started container.
 
 # ---- frontend build stage ----
 FROM node:22-slim AS frontend-build
 WORKDIR /frontend
-# COPY frontend/package.json frontend/package-lock.json ./
-# RUN npm ci
-# COPY frontend/ ./
-# RUN npm run build
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build
 
 # ---- backend runtime ----
 FROM python:3.12-slim AS backend
 
-# Not cosmetic. The §9 internal report prints "Erstellt am: DD.MM.YYYY HH:MM" from the container's
-# *local* time (app/statistics.py::_format_generated_at). A slim base image has no TZ set and
-# therefore runs on UTC, which would print a German-facing timestamp one to two hours in the past
-# — wrong in a way nobody would think to question. Set it here rather than in the app so the
-# choice stays an operations decision; override it in docker-compose for another region.
-ENV TZ=Europe/Berlin
+# Not cosmetic. The §9 internal report prints "Erstellt am: DD.MM.YYYY HH:MM" from the
+# container's *local* time (app/statistics.py::_format_generated_at). TZ alone is inert without
+# the tzdata package on a slim base — Python silently falls back to UTC instead of erroring,
+# which would print a German-facing timestamp one to two hours in the past and nobody would
+# think to question it. Both lines are required together.
+ENV TZ=Europe/Berlin \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    UV_LINK_MODE=copy \
+    PATH="/app/.venv/bin:$PATH"
 
-# System deps: fonts for German umlauts (Noto Sans/Serif), typst binary.
-# TODO: pin typst version; install from a release binary (no cargo/network at runtime).
+# No fonts-noto/system-fonts package here, deliberately: every app/reports/*.py render call sets
+# `ignore_system_fonts=True`, so Typst never touches whatever fonts happen to be installed and
+# renders with the fonts embedded in the typst binary itself — that's the whole point of the
+# flag (byte-identical output regardless of host). Those embedded fonts cover German umlauts
+# (ä/ö/ü/ß) fine; tests/test_attendance_list.py asserts real names ("Öztürk", "Straßer",
+# "Müller") round-trip through a render via pdfplumber text extraction, which already proves
+# this on the host and transfers directly to the container since system fonts are out of the
+# picture either way. Installing fonts here would be dead weight the app never reads.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        fonts-noto \
-        fonts-noto-cjk \
+        tzdata \
     && rm -rf /var/lib/apt/lists/*
 
-# TODO: install typst CLI binary (pinned version) into /usr/local/bin/typst here.
+RUN pip install --no-cache-dir uv
 
 WORKDIR /app
 
-# COPY backend/pyproject.toml backend/uv.lock ./
-# RUN pip install --no-cache-dir uv && uv sync --frozen --no-dev
+# Dependencies first, in their own layer, so an app-code-only change doesn't reinstall them.
+COPY backend/pyproject.toml backend/uv.lock ./
+RUN uv sync --frozen --no-dev --no-install-project
 
-# COPY backend/app/ ./app/
-# COPY backend/scripts/ ./scripts/
-# COPY --from=frontend-build /frontend/dist ./static/
+# backend/README.md is copied because pyproject.toml's `readme = "README.md"` makes hatchling
+# read it as build metadata — omitting it fails the project install below, not just cosmetic.
+COPY backend/README.md ./
+COPY backend/app/ ./app/
+COPY backend/scripts/ ./scripts/
+RUN uv sync --frozen --no-dev
 
-# Fetch cetz / cetz-plot (§12's charting packages for the §9 report) at BUILD time. This is the
-# only step in the entire image that touches the network, and it lives here — on the build host —
-# precisely so the running container never needs to (§13). The script pins both versions and
-# verifies a SHA-256 before unpacking; `app/reports/internal_report.py` then points Typst at the
-# resulting tree via `package_path`, so rendering a report never consults the @preview registry.
+COPY --from=frontend-build /frontend/dist ./static/
+
+# Fetch cetz / cetz-plot (§12) at BUILD time — the only network access in this whole image, and
+# it happens on the build host, never inside the running container (§13). Pinned versions +
+# SHA-256 verification live in the script itself; a re-published/compromised upstream archive
+# fails the build loudly instead of silently landing in a report render.
 #
-# Order matters: this must run AFTER the app source is copied, since the tree lands inside
-# `app/reports/typst_packages/`. It is deliberately not committed to git (see /.gitignore) —
-# it is reproducible from the pins in the script.
-#
-# Note this does not weaken §13. That constraint is about the deployed application never sending
-# exam data (names, Matrikelnummern) anywhere; downloading a public package while building an
-# image is a separate act, on a separate machine, involving no student data at all.
-# RUN uv run python scripts/vendor_typst_packages.py
+# `--no-sync`: without it, `uv run` re-syncs the venv against pyproject.toml's *default*
+# dependency groups before running anything — silently pulling mypy/ruff/pytest (the dev group)
+# back into the image despite the `--no-dev` sync above, and re-touching the network to do it.
+RUN uv run --no-sync python scripts/vendor_typst_packages.py
+
+# Non-root. The image also creates /app/data here (rather than leaving it to the volume mount)
+# so a *fresh* named volume inherits this ownership on first use — see docs/deployment.md for
+# the extra step a bind-mounted data directory needs instead.
+RUN useradd --system --create-home --uid 10001 gradinghelper \
+    && mkdir -p /app/data \
+    && chown -R gradinghelper:gradinghelper /app
+USER gradinghelper
 
 EXPOSE 8000
-# CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
-CMD ["echo", "GradingHelper image not yet implemented — see /SPECIFICATION.md"]
+
+# Plain python3, not curl/wget: keeps the apt-get list above to tzdata only.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD python3 -c "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/api/health', timeout=3)" || exit 1
+
+# Exec form, uvicorn as PID 1: it handles SIGTERM itself, so `docker stop`/compose shutdown is a
+# clean graceful shutdown with no wrapper process needed. Deliberately not `uv run uvicorn ...`:
+# `uv run` re-checks the lock on every start, which is a resolve attempt against the network on
+# every container start — precisely what §13 forbids at runtime, not just at build time. The
+# venv is on PATH (above) so plain `uvicorn` resolves to it directly.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips=*"]
