@@ -277,6 +277,30 @@ describe("ExamDetailPage — Decimal values stay strings on the way out", () => 
   });
 });
 
+describe("ExamDetailPage — bonus mode moved to the points-entry page (§7.3)", () => {
+  it("offers no bonus-mode control here", async () => {
+    renderPage();
+
+    await screen.findByLabelText("Maximale Punkte der Aufgabe 1");
+    expect(screen.queryByText("Bonuspunkte zählen immer")).toBeNull();
+    expect(screen.queryByText("Bonuspunkte nur bei Bestehen ohne Bonus")).toBeNull();
+  });
+
+  it("never sends bonus_mode in the PATCH — an unrelated save must not touch it", async () => {
+    const user = userEvent.setup();
+    const mock = renderPage();
+
+    await screen.findByLabelText("Maximale Punkte der Aufgabe 1");
+    await user.click(screen.getByRole("button", { name: "Speichern" }));
+
+    await waitFor(() => {
+      expect(mock.mock.calls.length).toBe(2);
+    });
+    const sent = JSON.parse(String(mock.mock.calls[1]?.[1]?.body)) as Record<string, unknown>;
+    expect(sent).not.toHaveProperty("bonus_mode");
+  });
+});
+
 describe("ExamDetailPage — an exam without a grading schema yet", () => {
   const FRESH: ExamDetail = { ...EXAM, grading_schema: [] };
 

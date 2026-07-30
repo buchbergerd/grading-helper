@@ -372,6 +372,73 @@ describe("PointsEntryPage — the single, exam-wide bonus field (§7.3)", () => 
   });
 });
 
+describe("PointsEntryPage — bonus mode (§7.3, moved here from ExamDetailPage)", () => {
+  function patchCallsTo(mock: ReturnType<typeof installFetchMock>, path: string) {
+    return mock.mock.calls.filter((c) => String(c[0]) === path && c[1]?.method === "PATCH");
+  }
+
+  it("checks the radio matching the grid's bonus_mode on load", async () => {
+    renderPage();
+
+    const always = (await screen.findByLabelText("Bonuspunkte zählen immer")) as HTMLInputElement;
+    const onlyIfPassing = screen.getByLabelText(
+      "Bonuspunkte nur bei Bestehen ohne Bonus",
+    ) as HTMLInputElement;
+    expect(always.checked).toBe(true);
+    expect(onlyIfPassing.checked).toBe(false);
+  });
+
+  it("marks the page dirty (shows the unsaved-changes indicator) when the mode is changed", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByTestId("points-row-1");
+    expect(screen.queryByTestId("unsaved-indicator")).toBeNull();
+
+    await user.click(screen.getByLabelText("Bonuspunkte nur bei Bestehen ohne Bonus"));
+
+    expect(screen.getByTestId("unsaved-indicator")).not.toBeNull();
+  });
+
+  it("Speichern with the mode changed PATCHes /api/exams/7 with only bonus_mode, alongside the points PUT", async () => {
+    const user = userEvent.setup();
+    const mock = renderPage();
+
+    await screen.findByTestId("points-row-1");
+    await user.click(screen.getByLabelText("Bonuspunkte nur bei Bestehen ohne Bonus"));
+    await user.click(screen.getByRole("button", { name: "Speichern" }));
+
+    await waitFor(() => {
+      expect(patchCallsTo(mock, "/api/exams/7").length).toBe(1);
+    });
+    const [, init] = patchCallsTo(mock, "/api/exams/7")[0] ?? [];
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    expect(body).toEqual({ bonus_mode: "ONLY_IF_PASSING_WITHOUT_BONUS" });
+
+    // The points PUT still went out in the same save.
+    expect(mock.mock.calls.some((c) => String(c[0]) === "/api/exams/7/points" && c[1]?.method === "PUT")).toBe(
+      true,
+    );
+  });
+
+  it("Speichern with the mode untouched never PATCHes /api/exams/7", async () => {
+    const user = userEvent.setup();
+    const mock = renderPage();
+
+    await screen.findByTestId("points-row-1");
+    // Touch something unrelated so Speichern is enabled, without touching the bonus-mode radios.
+    await user.click(screen.getByTestId("attended-2-present"));
+    await user.click(screen.getByRole("button", { name: "Speichern" }));
+
+    await waitFor(() => {
+      expect(mock.mock.calls.some((c) => String(c[0]) === "/api/exams/7/points" && c[1]?.method === "PUT")).toBe(
+        true,
+      );
+    });
+    expect(patchCallsTo(mock, "/api/exams/7").length).toBe(0);
+  });
+});
+
 describe("PointsEntryPage — attendance (§7.4/§8.1)", () => {
   it("disables point entry and shows n.e. for a not-attended row, without erasing its stored points", async () => {
     const user = userEvent.setup();

@@ -20,6 +20,8 @@ import {
   getExam,
   getPointsGrid,
   savePointsGrid,
+  updateExam,
+  type BonusMode,
   type CompletenessResult,
   type DownloadedFile,
   type ExamDetail,
@@ -222,6 +224,13 @@ export default function PointsEntryPage(): JSX.Element {
   const [bonusMixedCount, setBonusMixedCount] = useState<number | null>(null);
   const [showBulkAttendDialog, setShowBulkAttendDialog] = useState(false);
 
+  // The exam-wide bonus *mode* (§7.3) — moved here from ExamDetailPage since it governs how the
+  // bonus points entered on this page are applied. Edited via radios like the exercise/attendance
+  // grid above it, and committed by the same "Speichern" button (see `onSave`) rather than its
+  // own save action, so it participates in the same dirty/unsaved-changes tracking as everything
+  // else on this page.
+  const [bonusMode, setBonusModeState] = useState<BonusMode>("ALWAYS");
+
   const [completeness, setCompleteness] = useState<CompletenessResult | null>(null);
   const [completenessMessages, setCompletenessMessages] = useState<string[]>([]);
 
@@ -257,6 +266,7 @@ export default function PointsEntryPage(): JSX.Element {
       setExam(examDetail);
       setExamMessages([]);
       setGrid(pointsGrid);
+      setBonusModeState(pointsGrid.bonus_mode);
       const mappedRows = pointsGrid.entries.map((entry) => toEditableRow(entry, pointsGrid.exercises));
       setRows(mappedRows);
       const bonusField = computeBonusField(mappedRows);
@@ -330,6 +340,13 @@ export default function PointsEntryPage(): JSX.Element {
     setBonusFieldText(text);
     setBonusMixedCount(null);
     setRows((prev) => prev.map((row) => ({ ...row, bonusPointsText: text })));
+    setDirty(true);
+    setSavedNotice(false);
+    setSaveWarnings([]);
+  }
+
+  function updateBonusMode(mode: BonusMode): void {
+    setBonusModeState(mode);
     setDirty(true);
     setSavedNotice(false);
     setSaveWarnings([]);
@@ -446,7 +463,14 @@ export default function PointsEntryPage(): JSX.Element {
     setSavedNotice(false);
     try {
       const payload = buildSavePayload(rows, grid.exercises);
-      const saved = await savePointsGrid(examId, payload);
+      // The bonus mode is a separate resource (the exam, not the points grid) on the wire, so a
+      // changed mode needs its own PATCH alongside the points PUT — but both are committed
+      // together here since this button is this page's one "Speichern" action.
+      const bonusModeChanged = bonusMode !== grid.bonus_mode;
+      const [saved] = await Promise.all([
+        savePointsGrid(examId, payload),
+        bonusModeChanged ? updateExam(examId, { bonus_mode: bonusMode }) : Promise.resolve(null),
+      ]);
       // Re-seed from the server's recomputed rows rather than merging only the grade back in —
       // the server is authoritative (§8) for canonicalised values (e.g. a percentage-typed
       // "3," the instructor never finished) too, not just for the grade.
@@ -455,6 +479,9 @@ export default function PointsEntryPage(): JSX.Element {
       const bonusField = computeBonusField(mappedRows);
       setBonusFieldText(bonusField.text);
       setBonusMixedCount(bonusField.mixedCount);
+      if (bonusModeChanged) {
+        setGrid((prev) => (prev === null ? prev : { ...prev, bonus_mode: bonusMode }));
+      }
       setDirty(false);
       setSavedNotice(true);
       // Batch-level, not per-row (see BulkPointsSaveResult) — e.g. a value above an exercise's
@@ -575,8 +602,6 @@ export default function PointsEntryPage(): JSX.Element {
     );
   }
 
-  const bonusModeOption = BONUS_MODE_OPTIONS.find((option) => option.value === grid.bonus_mode);
-
   return (
     <section>
       <div className="breadcrumb-row">
@@ -681,6 +706,20 @@ export default function PointsEntryPage(): JSX.Element {
 
       <fieldset className="points-grid-bonus">
         <legend>Bonuspunkte</legend>
+        {BONUS_MODE_OPTIONS.map((option) => (
+          <div className="radio-option" key={option.value}>
+            <input
+              id={`bonus-mode-${option.value}`}
+              type="radio"
+              name="bonus-mode"
+              value={option.value}
+              checked={bonusMode === option.value}
+              onChange={() => updateBonusMode(option.value)}
+            />{" "}
+            <label htmlFor={`bonus-mode-${option.value}`}>{option.label}</label>
+            <span className="explanation">{option.explanation}</span>
+          </div>
+        ))}
         <div className="field">
           <label htmlFor="bonus-all">Bonuspunkte (für alle Studierenden)</label>
           <input
@@ -703,9 +742,6 @@ export default function PointsEntryPage(): JSX.Element {
             durch frühere Eingaben oder eine übernommene Klausur) — das Feld bleibt deshalb leer.
             Eine Eingabe hier setzt den Wert für <strong>alle</strong> Studierenden.
           </p>
-        ) : null}
-        {bonusModeOption !== undefined ? (
-          <p className="explanation">{bonusModeOption.explanation}</p>
         ) : null}
       </fieldset>
 
@@ -784,7 +820,7 @@ export default function PointsEntryPage(): JSX.Element {
                 const preview = computeGradePreview({
                   enteredExercisePoints: enteredPoints(row, grid.exercises),
                   bonusPoints: parseDecimalInput(row.bonusPointsText) ?? "0.00",
-                  bonusMode: grid.bonus_mode,
+                  bonusMode,
                   attended: row.attended,
                   gradingSchema: grid.grading_schema,
                   gradingConfigured: grid.grading_configured,

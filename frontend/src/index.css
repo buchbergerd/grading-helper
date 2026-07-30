@@ -81,7 +81,7 @@ a {
 
 .app-header-inner,
 .app-main {
-  max-width: 84rem;
+  max-width: 74rem;
   margin: 0 auto;
   padding: 0.75rem 1rem;
 }
@@ -303,6 +303,24 @@ button.link {
   gap: 0.5rem;
   flex-wrap: wrap;
   align-items: center;
+}
+
+/* A <Link> styled to look like a button.primary, e.g. the exam-overview actions
+   ("Anmeldungen verwalten", "Punkte & Anwesenheit erfassen", "Statistik"). */
+a.button-link {
+  display: inline-block;
+  font: inherit;
+  font-weight: 600;
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: var(--accent-fg);
+  text-decoration: none;
+}
+
+a.button-link:hover {
+  background: #163f70;
 }
 
 /* Per-row icon actions (registrations list): side by side, never wrapping onto their own
@@ -589,11 +607,10 @@ input.field-invalid {
   text-align: center;
 }
 
-/* The single, exam-wide bonus field above the grid (§7.3) — a fieldset for visual parity with
-   the bonus-mode radios on the exam-settings page, not a data-entry table. */
-.points-grid-bonus {
-  max-width: 32rem;
-}
+/* The bonus-mode radios (§7.3) plus the single, exam-wide bonus field above the grid — not a
+   data-entry table, so no max-width constraint on the fieldset itself (the radios' explanation
+   text needs the full available width, same as the plain <fieldset> this used to be on
+   ExamDetailPage). */
 
 .points-grid-bonus .explanation {
   display: block;

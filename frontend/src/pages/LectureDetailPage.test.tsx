@@ -47,7 +47,7 @@ afterEach(() => {
 });
 
 describe("LectureDetailPage — create-exam form", () => {
-  it("does not offer a bonus-mode control in the create form (it belongs on the exam itself)", async () => {
+  it("does not offer a bonus-mode control in the create form (it belongs on the points-entry page)", async () => {
     renderPage();
 
     const form = (await screen.findByRole("button", { name: "Klausur anlegen" })).closest("form");

@@ -6,7 +6,6 @@ import {
   errorMessages,
   getExam,
   updateExam,
-  type BonusMode,
   type ExamDetail,
   type Exercise,
   type GradingSchemaRow,
@@ -14,7 +13,6 @@ import {
 import { BackButton } from "../components/BackButton";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { ErrorList, SuccessNotice } from "../components/Messages";
-import { BONUS_MODE_OPTIONS } from "../grading/bonusMode";
 import {
   exercisePointsFieldError,
   GRADE_SCALE,
@@ -125,7 +123,6 @@ export default function ExamDetailPage(): JSX.Element {
   const [semester, setSemester] = useState("");
   const [termin, setTermin] = useState("");
   const [examDateText, setExamDateText] = useState("");
-  const [bonusMode, setBonusMode] = useState<BonusMode>("ALWAYS");
   const [exercises, setExercises] = useState<ExerciseRow[]>([]);
   const [schema, setSchema] = useState<SchemaRow[]>(toSchemaRows([]));
   // Grade -> German message, populated from a 422's own text (see onSave's catch block) so a
@@ -138,7 +135,6 @@ export default function ExamDetailPage(): JSX.Element {
     setSemester(detail.semester);
     setTermin(detail.termin);
     setExamDateText(formatDate(detail.exam_date));
-    setBonusMode(detail.bonus_mode);
     setExercises(toExerciseRows(detail.exercises));
     setSchema(toSchemaRows(detail.grading_schema));
     setServerGradeErrors(new Map());
@@ -294,7 +290,6 @@ export default function ExamDetailPage(): JSX.Element {
           semester: semester.trim(),
           termin: termin.trim(),
           exam_date: isoDate,
-          bonus_mode: bonusMode,
           // Full replace, not a merge — the contract is explicit about this.
           exercises: exercisePayload,
           ...(schemaIsEmpty ? {} : { grading_schema: schemaPayload }),
@@ -363,11 +358,20 @@ export default function ExamDetailPage(): JSX.Element {
           : `${exam.registration_count} angemeldete Studierende`}
       </p>
 
-      <p className="button-row">
-        <Link to={`/klausuren/${exam.id}/anmeldungen`}>Anmeldungen verwalten</Link>
-        <Link to={`/klausuren/${exam.id}/punkte`}>Punkte &amp; Anwesenheit erfassen</Link>
-        <Link to={`/klausuren/${exam.id}/statistik`}>Statistik</Link>
-      </p>
+      <div className="panel">
+        <h2 style={{ marginTop: 0 }}>Aktionen</h2>
+        <p className="button-row">
+          <Link className="button-link" to={`/klausuren/${exam.id}/anmeldungen`}>
+            Anmeldungen verwalten
+          </Link>
+          <Link className="button-link" to={`/klausuren/${exam.id}/punkte`}>
+            Punkte &amp; Anwesenheit erfassen
+          </Link>
+          <Link className="button-link" to={`/klausuren/${exam.id}/statistik`}>
+            Statistik
+          </Link>
+        </p>
+      </div>
 
       <ErrorList messages={messages} title={messages.length > 1 ? "Bitte prüfen:" : undefined} />
       {saved ? <SuccessNotice>Die Klausur wurde gespeichert.</SuccessNotice> : null}
@@ -411,24 +415,6 @@ export default function ExamDetailPage(): JSX.Element {
           </div>
         </div>
 
-        <fieldset>
-          <legend>Bonuspunkte</legend>
-          {BONUS_MODE_OPTIONS.map((option) => (
-            <div className="radio-option" key={option.value}>
-              <input
-                id={`bonus-${option.value}`}
-                type="radio"
-                name="bonus-mode"
-                value={option.value}
-                checked={bonusMode === option.value}
-                onChange={() => setBonusMode(option.value)}
-              />{" "}
-              <label htmlFor={`bonus-${option.value}`}>{option.label}</label>
-              <span className="explanation">{option.explanation}</span>
-            </div>
-          ))}
-        </fieldset>
-
         <div className="panel">
           <h2 style={{ marginTop: 0 }}>Aufgaben</h2>
           {exercises.length === 0 ? (
@@ -444,7 +430,7 @@ export default function ExamDetailPage(): JSX.Element {
                   <th scope="col" style={{ width: "10rem" }}>
                     Max. Punkte
                   </th>
-                  <th scope="col" style={{ width: "12rem" }}>
+                  <th scope="col" style={{ width: "16rem" }}>
                     Reihenfolge
                   </th>
                 </tr>
