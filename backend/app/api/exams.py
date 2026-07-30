@@ -208,8 +208,14 @@ def count_affected_registrations(db: Session, exam: Exam) -> int:
 
 
 def _validate_exercises(items: list[ExerciseInput]) -> list[str]:
-    """German error messages for an exercise list (empty list = valid: an exam may have none)."""
+    """German error messages for an exercise list (empty list = valid: an exam may have none).
+
+    A repeated ``id`` would make ``_replace_exercises`` write the same row twice and leave a
+    position gap in the result — reject it here rather than let it corrupt the exam's position
+    numbering.
+    """
     errors: list[str] = []
+    seen_ids: set[int] = set()
     for index, item in enumerate(items, start=1):
         label = item.name.strip() or f"Aufgabe {index}"
         if not item.name.strip():
@@ -219,6 +225,10 @@ def _validate_exercises(items: list[ExerciseInput]) -> list[str]:
                 f"Aufgabe {index} ({label}): Die maximale Punktzahl muss größer als 0 sein "
                 f"(aktuell: {_format_decimal(item.max_points)})."
             )
+        if item.id is not None:
+            if item.id in seen_ids:
+                errors.append(f"Aufgabe {index} ({label}): Doppelte Aufgaben-ID.")
+            seen_ids.add(item.id)
     return errors
 
 
@@ -251,19 +261,50 @@ def _validate_grading_schema_input(
 
 
 def _replace_exercises(db: Session, exam: Exam, items: list[ExerciseInput]) -> None:
-    """Full replace of the exam's exercises, renumbered ``1..N`` in submitted order.
+    """Diff-replace the exam's exercises, matched to existing rows by ``id``, renumbered
+    ``1..N`` in submitted order.
+
+    An item whose ``id`` matches one of the exam's current exercises updates that row in place
+    rather than deleting and recreating it. That matters because ``ExercisePoints`` only
+    cascades from ``Exercise`` at the database level, invisibly to the ORM (no ORM-level
+    delete-orphan on that side — see ``app/models/registration.py``): deleting and recreating an
+    unchanged exercise's row — e.g. because the instructor only added *another* exercise, or
+    reordered — would silently wipe out every already-entered point for it. An item with no
+    matching ``id`` (new, or naming an exercise outside this exam) becomes a new row; an existing
+    exercise absent from the submission is removed, taking its ``ExercisePoints`` with it — the
+    one case where losing its points is correct, since the exercise itself no longer exists.
 
     Positions are assigned server-side rather than taken from the payload so they are always
-    unique and contiguous. The ``flush()`` between the deletes and the inserts matters: without
-    it a reorder of the same positions would hit ``uq_exercise_exam_position`` mid-statement.
+    unique and contiguous. Kept rows pass through a scratch negative position first: setting a
+    reordered row directly to its final position can collide with another kept row still sitting
+    there, which would hit ``uq_exercise_exam_position`` mid-statement (SQLite constraints are
+    checked immediately, not deferred) — ``-id`` is unique and never collides with a real
+    (positive) position.
     """
-    for exercise in list(exam.exercises):
-        exam.exercises.remove(exercise)
+    existing_by_id = {exercise.id: exercise for exercise in exam.exercises}
+    matches = [existing_by_id.get(item.id) if item.id is not None else None for item in items]
+    kept_ids = {exercise.id for exercise in matches if exercise is not None}
+
+    for existing_exercise in list(exam.exercises):
+        if existing_exercise.id not in kept_ids:
+            exam.exercises.remove(existing_exercise)
     db.flush()
-    for position, item in enumerate(items, start=1):
-        exam.exercises.append(
-            Exercise(name=item.name.strip(), max_points=item.max_points, position=position)
-        )
+
+    for exercise in matches:
+        if exercise is not None:
+            exercise.position = -exercise.id
+    db.flush()
+
+    for position, (item, exercise) in enumerate(zip(items, matches, strict=True), start=1):
+        name = item.name.strip()
+        if exercise is not None:
+            exercise.name = name
+            exercise.max_points = item.max_points
+            exercise.position = position
+        else:
+            exam.exercises.append(
+                Exercise(name=name, max_points=item.max_points, position=position)
+            )
     db.flush()
 
 
@@ -515,9 +556,9 @@ def update_exam(
     if thresholds_moved and has_registrations:
         from app.api.points import grade_snapshot
 
-        # A full exercise replace deletes the old Exercise rows; SQLite's ON DELETE CASCADE
-        # (app/db.py) removes their ExercisePoints at the database level, invisibly to the ORM
-        # session (Exercise carries no ORM-level cascade to ExercisePoints — see
+        # An exercise replace may delete Exercise rows the submission dropped; SQLite's ON DELETE
+        # CASCADE (app/db.py) removes their ExercisePoints at the database level, invisibly to the
+        # ORM session (Exercise carries no ORM-level cascade to ExercisePoints — see
         # app/models/registration.py). Expire everything so the "after" snapshot below re-reads
         # from the database rather than a stale in-session ExercisePoints collection.
         db.expire_all()

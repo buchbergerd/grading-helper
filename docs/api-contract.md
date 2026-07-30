@@ -69,9 +69,14 @@ total_max_points, recomputation_warning}`.
   presentation concern — §14 #6 — applied in the UI and in reports, not in the API).
 - `bonus_mode`: `"ALWAYS" | "ONLY_IF_PASSING_WITHOUT_BONUS"` (§7.3).
 - `exercises`: `[{id, name, max_points: "12.5", position}]` — ordered by `position`. On a write,
-  `id` and `position` are accepted (so a detail response can be sent straight back) but
-  **ignored**: positions are renumbered `1..N` server-side in submitted order, and identity is
-  not preserved across a replace. `max_points` must be `> 0`.
+  `position` is accepted (so a detail response can be sent straight back) but **ignored**:
+  positions are renumbered `1..N` server-side in submitted order. `id` **is** meaningful: an item
+  whose `id` matches one of the exam's current exercises updates that row in place rather than
+  replacing it, which is what keeps that exercise's already-entered `ExercisePoints` alive across
+  the edit — e.g. adding one more exercise, reordering, or renaming must not wipe the others'
+  points. An absent or unmatched `id` creates a new exercise; an existing exercise with no
+  matching item in the submission is removed (and its points with it — the one case where that's
+  correct). `max_points` must be `> 0`.
 - `grading_schema`: `[{grade: "1.0", percentage: "95", threshold_points: "57.0"}]` — all ten
   grades of §7.1, strictly decreasing percentages (§7.2). Grades are strings, never JSON
   numbers. A schema is either **absent/empty or complete**; a partial one is a `422`.

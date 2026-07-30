@@ -412,6 +412,32 @@ def test_positions_are_renumbered_server_side(
     assert body["total_max_points"] == "30"
 
 
+def test_patch_rejects_a_duplicate_exercise_id(
+    instructor_client: TestClient, lecture_id: int
+) -> None:
+    """A repeated ``id`` would otherwise make ``_replace_exercises`` write the same row twice
+    and leave a position gap — reject it as a 422 instead."""
+    exam = post_exam(
+        instructor_client,
+        lecture_id,
+        exercises=[{"name": "Aufgabe 1", "max_points": "10"}],
+    )
+    exercise_id = int(exam["exercises"][0]["id"])
+
+    response = instructor_client.patch(
+        f"/api/exams/{exam['id']}",
+        json={
+            "exercises": [
+                {"id": exercise_id, "name": "Aufgabe 1", "max_points": "10"},
+                {"id": exercise_id, "name": "Aufgabe 2", "max_points": "20"},
+            ]
+        },
+    )
+
+    assert response.status_code == 422
+    assert "Doppelte Aufgaben-ID" in response.text
+
+
 def test_patch_exercises_is_a_full_replace_not_a_merge(
     instructor_client: TestClient, lecture_id: int, session: Session
 ) -> None:
@@ -469,6 +495,100 @@ def test_patch_can_reorder_the_same_exercises(
         "Aufgabe 1",
     ]
     assert [exercise["position"] for exercise in response.json()["exercises"]] == [1, 2]
+
+
+def test_patch_reordering_with_round_tripped_ids_keeps_points_with_their_exercise(
+    instructor_client: TestClient, lecture_id: int, session: Session
+) -> None:
+    """Points follow the exercise's ``id`` through a reorder, not the exercise's position —
+    the scratch-negative-position two-phase update must not trip ``uq_exercise_exam_position``
+    and must not swap which points belong to which exercise."""
+    exam = post_exam(
+        instructor_client,
+        lecture_id,
+        exercises=[
+            {"name": "Aufgabe 1", "max_points": "10"},
+            {"name": "Aufgabe 2", "max_points": "20"},
+        ],
+    )
+    exam_id = int(exam["id"])
+    exercise_1_id = int(exam["exercises"][0]["id"])
+    exercise_2_id = int(exam["exercises"][1]["id"])
+    registration = add_registration(session, exam_id, "1000001")
+    session.add_all(
+        [
+            ExercisePoints(
+                registration_id=registration.id, exercise_id=exercise_1_id, points=Decimal("3")
+            ),
+            ExercisePoints(
+                registration_id=registration.id, exercise_id=exercise_2_id, points=Decimal("15")
+            ),
+        ]
+    )
+    session.commit()
+
+    body = instructor_client.patch(
+        f"/api/exams/{exam_id}",
+        json={
+            "exercises": [
+                {"id": exercise_2_id, "name": "Aufgabe 2", "max_points": "20"},
+                {"id": exercise_1_id, "name": "Aufgabe 1", "max_points": "10"},
+            ]
+        },
+    ).json()
+
+    assert [exercise["name"] for exercise in body["exercises"]] == ["Aufgabe 2", "Aufgabe 1"]
+    assert [exercise["position"] for exercise in body["exercises"]] == [1, 2]
+    assert [exercise["id"] for exercise in body["exercises"]] == [exercise_2_id, exercise_1_id]
+    session.expire_all()
+    points_by_exercise = dict(
+        session.execute(
+            select(ExercisePoints.exercise_id, ExercisePoints.points).where(
+                ExercisePoints.registration_id == registration.id
+            )
+        ).all()
+    )
+    assert points_by_exercise[exercise_1_id] == Decimal("3")
+    assert points_by_exercise[exercise_2_id] == Decimal("15")
+
+
+def test_patch_adding_an_exercise_keeps_existing_points(
+    instructor_client: TestClient, lecture_id: int, session: Session
+) -> None:
+    """Round-tripping an existing exercise's ``id`` while adding another must not touch its
+    ``ExercisePoints`` — this is the bug where "add an exercise" wiped all entered points."""
+    exam = post_exam(
+        instructor_client,
+        lecture_id,
+        exercises=[{"name": "Aufgabe 1", "max_points": "10"}],
+    )
+    exam_id = int(exam["id"])
+    exercise_id = int(exam["exercises"][0]["id"])
+    registration = add_registration(session, exam_id, "1000001")
+    session.add(
+        ExercisePoints(
+            registration_id=registration.id, exercise_id=exercise_id, points=Decimal("7.5")
+        )
+    )
+    session.commit()
+
+    body = instructor_client.patch(
+        f"/api/exams/{exam_id}",
+        json={
+            "exercises": [
+                {"id": exercise_id, "name": "Aufgabe 1", "max_points": "10"},
+                {"name": "Aufgabe 2", "max_points": "20"},
+            ]
+        },
+    ).json()
+
+    assert [exercise["name"] for exercise in body["exercises"]] == ["Aufgabe 1", "Aufgabe 2"]
+    assert body["exercises"][0]["id"] == exercise_id
+    session.expire_all()
+    remaining_points = session.execute(
+        select(ExercisePoints.points).where(ExercisePoints.exercise_id == exercise_id)
+    ).scalar_one()
+    assert remaining_points == Decimal("7.5")
 
 
 def test_patch_response_matches_a_subsequent_get(

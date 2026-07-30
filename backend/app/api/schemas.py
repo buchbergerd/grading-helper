@@ -183,10 +183,13 @@ DecimalString = Annotated[
 class ExerciseInput(BaseModel):
     """One exercise in a create/replace payload.
 
-    ``id`` and ``position`` are accepted (the contract's exercise shape carries them, so a
-    client can round-trip a detail response straight back) but **ignored**: positions are
-    renumbered ``1..N`` server-side in submitted order, and identity is not preserved across a
-    full replace.
+    ``position`` is accepted (the contract's exercise shape carries it, so a client can
+    round-trip a detail response straight back) but **ignored**: positions are renumbered
+    ``1..N`` server-side in submitted order. ``id`` is also accepted for round-tripping, and *is*
+    meaningful: an item whose ``id`` matches one of the exam's current exercises updates that row
+    in place instead of replacing it, which is what keeps already-entered ``ExercisePoints`` alive
+    across an edit (see ``_replace_exercises`` in ``app/api/exams.py``). An absent/unmatched ``id``
+    creates a new exercise.
     """
 
     name: str
