@@ -5,7 +5,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 
 import ExamStatisticsPage from "./ExamStatisticsPage";
 import { blobResponse, installFetchMock, jsonResponse } from "../test/mockFetch";
-import type { ExamDetail, ExamStatistics } from "../api/client";
+import type { CompletenessResult, ExamDetail, ExamStatistics } from "../api/client";
 
 /**
  * jsdom has no `ResizeObserver` (it does no layout), which Recharts' `ResponsiveContainer` needs
@@ -238,12 +238,42 @@ const STATS_EMPTY: ExamStatistics = {
   versuch_breakdown: [],
 };
 
+const COMPLETENESS_OK: CompletenessResult = {
+  is_complete: true,
+  incomplete_count: 0,
+  incomplete_students: [],
+};
+
+const COMPLETENESS_INCOMPLETE: CompletenessResult = {
+  is_complete: false,
+  incomplete_count: 2,
+  incomplete_students: [
+    {
+      id: 2,
+      matrikelnummer: "1002",
+      nachname: "Schmidt",
+      vorname: "Ben",
+      attendance_missing: true,
+      missing_exercises: [],
+    },
+    {
+      id: 1,
+      matrikelnummer: "1001",
+      nachname: "Müller",
+      vorname: "Anna",
+      attendance_missing: false,
+      missing_exercises: ["Aufgabe 2"],
+    },
+  ],
+};
+
 function baseRoutes(
   overrides: Partial<Record<string, (url: string, init: RequestInit | undefined) => Response>> = {},
 ): Record<string, (url: string, init: RequestInit | undefined) => Response> {
   return {
     "/api/exams/7": () => jsonResponse(200, EXAM),
     "/api/exams/7/statistics": () => jsonResponse(200, STATS),
+    "/api/exams/7/completeness": () => jsonResponse(200, COMPLETENESS_OK),
     ...overrides,
   };
 }
@@ -269,10 +299,7 @@ afterEach(() => {
 
 describe("ExamStatisticsPage — loading", () => {
   it("shows a loading indicator before the data arrives", () => {
-    installFetchMock({
-      "/api/exams/7": () => jsonResponse(200, EXAM),
-      "/api/exams/7/statistics": () => jsonResponse(200, STATS),
-    });
+    installFetchMock(baseRoutes());
     render(
       <MemoryRouter initialEntries={["/klausuren/7/statistik"]}>
         <Routes>
@@ -443,7 +470,7 @@ describe("ExamStatisticsPage — PDF download", () => {
         }),
     });
 
-    await user.click(await screen.findByRole("button", { name: "PDF herunterladen" }));
+    await user.click(await screen.findByRole("button", { name: "Internen Bericht herunterladen" }));
 
     await waitFor(() => {
       expect(createObjectURL).toHaveBeenCalledWith(pdfBlob);
@@ -452,6 +479,126 @@ describe("ExamStatisticsPage — PDF download", () => {
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:mock-url");
 
     clickSpy.mockRestore();
+  });
+});
+
+describe("ExamStatisticsPage — completeness gate (§8.1)", () => {
+  it("shows a one-line hint with the incomplete count and a link to the Punkte page", async () => {
+    renderPage({
+      "/api/exams/7/completeness": () => jsonResponse(200, COMPLETENESS_INCOMPLETE),
+    });
+
+    const hint = await screen.findByTestId("completeness-incomplete-hint");
+    expect(hint.textContent).toContain("2");
+    expect(hint.textContent).toContain("Punkte-Seite");
+    expect(screen.getByRole("link", { name: "Punkte-Seite" }).getAttribute("href")).toBe(
+      "/klausuren/7/punkte",
+    );
+  });
+
+  it("shows a success notice once the exam is complete", async () => {
+    renderPage();
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("completeness-incomplete-hint")).toBeNull();
+    });
+    expect(
+      screen.getByText("Alle Daten sind vollständig — Offizielle Berichte können erzeugt werden."),
+    ).not.toBeNull();
+  });
+});
+
+describe("ExamStatisticsPage — §10/§11 report downloads", () => {
+  const REPORT_BUTTON_NAMES = [
+    "Prüfungsamt-Bericht als PDF herunterladen",
+    "Prüfungsamt-Bericht als Excel herunterladen",
+    "Notenliste als PDF herunterladen",
+    "Notenliste als Excel herunterladen",
+  ];
+
+  it("shows all four report buttons, enabled, once complete and the schema is configured", async () => {
+    renderPage(); // COMPLETENESS_OK + STATS.grading_configured === true
+
+    for (const name of REPORT_BUTTON_NAMES) {
+      const button = (await screen.findByRole("button", { name })) as HTMLButtonElement;
+      expect(button.disabled).toBe(false);
+    }
+    expect(screen.queryByTestId("schema-not-configured-hint")).toBeNull();
+  });
+
+  it("shows a hint instead of the buttons when the exam is complete but the schema isn't configured", async () => {
+    renderPage({
+      "/api/exams/7/statistics": () => jsonResponse(200, STATS_NO_SCHEMA),
+    });
+
+    const hint = await screen.findByTestId("schema-not-configured-hint");
+    expect(hint.textContent).toBe("Der Notenschlüssel ist noch nicht vollständig konfiguriert.");
+    for (const name of REPORT_BUTTON_NAMES) {
+      expect(screen.queryByRole("button", { name })).toBeNull();
+    }
+  });
+
+  it("shows neither the buttons nor the schema hint while the exam is still incomplete", async () => {
+    renderPage({
+      "/api/exams/7/completeness": () => jsonResponse(200, COMPLETENESS_INCOMPLETE),
+    });
+
+    await screen.findByTestId("completeness-incomplete-hint");
+    for (const name of REPORT_BUTTON_NAMES) {
+      expect(screen.queryByRole("button", { name })).toBeNull();
+    }
+    expect(screen.queryByTestId("schema-not-configured-hint")).toBeNull();
+  });
+
+  it("clicking 'Prüfungsamt-Bericht als PDF herunterladen' fetches the right path and triggers a browser download", async () => {
+    const user = userEvent.setup();
+    const createObjectURL = vi.fn(() => "blob:mock-url");
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal("URL", { ...URL, createObjectURL, revokeObjectURL });
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+
+    const pdfBlob = new Blob(["%PDF-1.4"], { type: "application/pdf" });
+    const mock = renderPage({
+      "/api/exams/7/reports/examination-office/pdf": () =>
+        blobResponse(200, pdfBlob, {
+          "Content-Disposition": 'attachment; filename="pruefungsamt.pdf"',
+        }),
+    });
+
+    await user.click(
+      await screen.findByRole("button", { name: "Prüfungsamt-Bericht als PDF herunterladen" }),
+    );
+
+    await waitFor(() => {
+      expect(createObjectURL).toHaveBeenCalledWith(pdfBlob);
+    });
+    expect(clickSpy).toHaveBeenCalled();
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:mock-url");
+    const call = mock.mock.calls.find((c) =>
+      String(c[0]).includes("/exams/7/reports/examination-office/pdf"),
+    );
+    expect(call).toBeDefined();
+
+    clickSpy.mockRestore();
+  });
+
+  it("clicking 'Notenliste als Excel herunterladen' fetches the excel path and shows an error on a stale-UI 409", async () => {
+    const user = userEvent.setup();
+    renderPage({
+      "/api/exams/7/reports/student-results/excel": () =>
+        jsonResponse(409, { detail: { errors: ["Der Notenschlüssel ist nicht vollständig konfiguriert."] } }),
+    });
+
+    await user.click(
+      await screen.findByRole("button", { name: "Notenliste als Excel herunterladen" }),
+    );
+
+    const errorBox = await screen.findByTestId("report-download-errors");
+    await waitFor(() => {
+      expect(errorBox.textContent).toContain(
+        "Der Notenschlüssel ist nicht vollständig konfiguriert.",
+      );
+    });
   });
 });
 

@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 
 import PointsEntryPage from "./PointsEntryPage";
-import { blobResponse, installFetchMock, jsonResponse } from "../test/mockFetch";
+import { installFetchMock, jsonResponse } from "../test/mockFetch";
 import type { CompletenessResult, ExamDetail, PointsGrid } from "../api/client";
 
 const EXAM: ExamDetail = {
@@ -660,13 +660,16 @@ describe("PointsEntryPage — completeness gate (§8.1)", () => {
     expect(annaRow.textContent).toContain("Aufgabe 2");
   });
 
-  it("shows a success notice once the exam is complete", async () => {
+  it("shows a success notice pointing to the Statistik page once the exam is complete", async () => {
     renderPage();
 
     await waitFor(() => {
       expect(screen.queryByTestId("completeness-list")).toBeNull();
     });
-    expect(screen.getByText("Alle Daten sind vollständig — Berichte können erzeugt werden.")).not.toBeNull();
+    expect(screen.getByText(/Alle Daten sind vollständig/)).not.toBeNull();
+    expect(screen.getByRole("link", { name: "Statistik-Seite" }).getAttribute("href")).toBe(
+      "/klausuren/7/statistik",
+    );
   });
 });
 
@@ -734,101 +737,6 @@ describe("PointsEntryPage — server errors", () => {
     await waitFor(() => {
       expect(errorBox.textContent).toContain(
         "Aufgabe 1: „25“ überschreitet die Höchstpunktzahl 20,00 nicht plausibel.",
-      );
-    });
-  });
-});
-
-describe("PointsEntryPage — §10/§11 report downloads", () => {
-  const REPORT_BUTTON_NAMES = [
-    "Prüfungsamt-Bericht als PDF herunterladen",
-    "Prüfungsamt-Bericht als Excel herunterladen",
-    "Notenliste als PDF herunterladen",
-    "Notenliste als Excel herunterladen",
-  ];
-
-  it("shows all four report buttons, enabled, once complete and the schema is configured", async () => {
-    renderPage(); // COMPLETENESS_OK + GRID.grading_configured === true
-
-    for (const name of REPORT_BUTTON_NAMES) {
-      const button = (await screen.findByRole("button", { name })) as HTMLButtonElement;
-      expect(button.disabled).toBe(false);
-    }
-    expect(screen.queryByTestId("schema-not-configured-hint")).toBeNull();
-  });
-
-  it("shows a hint instead of the buttons when the exam is complete but the schema isn't configured", async () => {
-    renderPage({
-      "/api/exams/7/points": (_url, init) =>
-        init?.method === "PUT" ? echoPut(init) : jsonResponse(200, { ...GRID, grading_configured: false }),
-    });
-
-    const hint = await screen.findByTestId("schema-not-configured-hint");
-    expect(hint.textContent).toBe("Der Notenschlüssel ist noch nicht vollständig konfiguriert.");
-    for (const name of REPORT_BUTTON_NAMES) {
-      expect(screen.queryByRole("button", { name })).toBeNull();
-    }
-  });
-
-  it("shows neither the buttons nor the schema hint while the exam is still incomplete", async () => {
-    renderPage({
-      "/api/exams/7/completeness": () => jsonResponse(200, COMPLETENESS_INCOMPLETE),
-    });
-
-    await screen.findByTestId("completeness-list");
-    for (const name of REPORT_BUTTON_NAMES) {
-      expect(screen.queryByRole("button", { name })).toBeNull();
-    }
-    expect(screen.queryByTestId("schema-not-configured-hint")).toBeNull();
-  });
-
-  it("clicking 'Prüfungsamt-Bericht als PDF herunterladen' fetches the right path and triggers a browser download", async () => {
-    const user = userEvent.setup();
-    const createObjectURL = vi.fn(() => "blob:mock-url");
-    const revokeObjectURL = vi.fn();
-    vi.stubGlobal("URL", { ...URL, createObjectURL, revokeObjectURL });
-    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
-
-    const pdfBlob = new Blob(["%PDF-1.4"], { type: "application/pdf" });
-    const mock = renderPage({
-      "/api/exams/7/reports/examination-office/pdf": () =>
-        blobResponse(200, pdfBlob, {
-          "Content-Disposition": 'attachment; filename="pruefungsamt.pdf"',
-        }),
-    });
-
-    await user.click(
-      await screen.findByRole("button", { name: "Prüfungsamt-Bericht als PDF herunterladen" }),
-    );
-
-    await waitFor(() => {
-      expect(createObjectURL).toHaveBeenCalledWith(pdfBlob);
-    });
-    expect(clickSpy).toHaveBeenCalled();
-    expect(revokeObjectURL).toHaveBeenCalledWith("blob:mock-url");
-    const call = mock.mock.calls.find((c) =>
-      String(c[0]).includes("/exams/7/reports/examination-office/pdf"),
-    );
-    expect(call).toBeDefined();
-
-    clickSpy.mockRestore();
-  });
-
-  it("clicking 'Notenliste als Excel herunterladen' fetches the excel path and shows an error on a stale-UI 409", async () => {
-    const user = userEvent.setup();
-    renderPage({
-      "/api/exams/7/reports/student-results/excel": () =>
-        jsonResponse(409, { detail: { errors: ["Der Notenschlüssel ist nicht vollständig konfiguriert."] } }),
-    });
-
-    await user.click(
-      await screen.findByRole("button", { name: "Notenliste als Excel herunterladen" }),
-    );
-
-    const errorBox = await screen.findByTestId("report-download-errors");
-    await waitFor(() => {
-      expect(errorBox.textContent).toContain(
-        "Der Notenschlüssel ist nicht vollständig konfiguriert.",
       );
     });
   });

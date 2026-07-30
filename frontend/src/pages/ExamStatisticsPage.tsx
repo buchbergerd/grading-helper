@@ -2,10 +2,17 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import {
+  downloadExaminationOfficeExcel,
+  downloadExaminationOfficePdf,
   downloadInternalReport,
+  downloadStudentResultsExcel,
+  downloadStudentResultsPdf,
   errorMessages,
+  getCompleteness,
   getExam,
   getExamStatistics,
+  type CompletenessResult,
+  type DownloadedFile,
   type ExamDetail,
   type ExamStatistics,
 } from "../api/client";
@@ -16,9 +23,16 @@ import {
   type HistogramBarDatum,
 } from "../statistics/series";
 import { BackButton } from "../components/BackButton";
-import { ErrorList } from "../components/Messages";
+import { ErrorList, SuccessNotice } from "../components/Messages";
 import { formatDateOrDash, formatDecimalOrDash } from "../util/format";
 import { parseRouteId } from "../util/id";
+
+/** One of the four §10/§11 report downloads offered once the exam is export-ready. */
+type ReportDownloadKind =
+  | "examination-office-pdf"
+  | "examination-office-excel"
+  | "student-results-pdf"
+  | "student-results-excel";
 
 /**
  * §9's live dashboard. Deliberately computes nothing: every number rendered here either came
@@ -39,6 +53,15 @@ export default function ExamStatisticsPage(): JSX.Element {
 
   const [downloading, setDownloading] = useState(false);
   const [downloadMessages, setDownloadMessages] = useState<string[]>([]);
+
+  const [completeness, setCompleteness] = useState<CompletenessResult | null>(null);
+  const [completenessMessages, setCompletenessMessages] = useState<string[]>([]);
+
+  // §10/§11 report downloads. One key tracks which of the four buttons is in flight (rather than
+  // a plain boolean) so its own label can say "Wird erstellt …" while the other three stay in
+  // their normal state.
+  const [downloadingReport, setDownloadingReport] = useState<ReportDownloadKind | null>(null);
+  const [reportDownloadMessages, setReportDownloadMessages] = useState<string[]>([]);
 
   const reload = useCallback(async () => {
     if (examId === null) {
@@ -62,9 +85,50 @@ export default function ExamStatisticsPage(): JSX.Element {
     }
   }, [examId]);
 
+  const reloadCompleteness = useCallback(async () => {
+    if (examId === null) return;
+    try {
+      setCompleteness(await getCompleteness(examId));
+      setCompletenessMessages([]);
+    } catch (error) {
+      setCompletenessMessages(errorMessages(error));
+    }
+  }, [examId]);
+
   useEffect(() => {
     void reload();
-  }, [reload]);
+    void reloadCompleteness();
+  }, [reload, reloadCompleteness]);
+
+  /**
+   * Shared by all four §10/§11 report buttons: blob -> `URL.createObjectURL` -> a temporary
+   * `<a download>` click -> revoke, same pattern as `onDownloadPdf` below. A stale-UI `409` (the
+   * exam stopped being export-ready between this page loading and the click) surfaces through the
+   * same `errorMessages`/`ErrorList` path as every other error on this page rather than a bespoke
+   * one.
+   */
+  async function downloadReport(
+    kind: ReportDownloadKind,
+    fetcher: () => Promise<DownloadedFile>,
+  ): Promise<void> {
+    setDownloadingReport(kind);
+    setReportDownloadMessages([]);
+    try {
+      const { blob, filename } = await fetcher();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      setReportDownloadMessages(errorMessages(error));
+    } finally {
+      setDownloadingReport(null);
+    }
+  }
 
   async function onDownloadPdf(): Promise<void> {
     if (examId === null) return;
@@ -126,12 +190,108 @@ export default function ExamStatisticsPage(): JSX.Element {
 
       <ErrorList messages={messages} />
 
-      <p className="button-row">
-        <button type="button" onClick={() => void onDownloadPdf()} disabled={downloading}>
-          {downloading ? "Wird erstellt …" : "PDF herunterladen"}
-        </button>
-      </p>
-      <ErrorList messages={downloadMessages} />
+      <div className="panel">
+        <h2 style={{ marginTop: 0 }}>Berichte</h2>
+        <div className="button-row">
+          <button type="button" onClick={() => void onDownloadPdf()} disabled={downloading}>
+            {downloading ? "Wird erstellt …" : "Internen Bericht herunterladen"}
+          </button>
+        </div>
+        <ErrorList messages={downloadMessages} />
+
+        <hr />
+
+        <div data-testid="completeness-errors">
+          <ErrorList messages={completenessMessages} />
+        </div>
+        {completeness === null ? (
+          <p className="muted">Wird geladen …</p>
+        ) : completeness.is_complete ? (
+          <>
+            <SuccessNotice>
+              Alle Daten sind vollständig — Offizielle Berichte können erzeugt werden.
+            </SuccessNotice>
+            {stats.grading_configured ? (
+              <>
+                <div data-testid="report-download-errors">
+                  <ErrorList messages={reportDownloadMessages} />
+                </div>
+                <div className="button-row">
+                  <button
+                    type="button"
+                    data-testid="download-examination-office-pdf"
+                    disabled={downloadingReport !== null}
+                    onClick={() =>
+                      void downloadReport("examination-office-pdf", () =>
+                        downloadExaminationOfficePdf(examId),
+                      )
+                    }
+                  >
+                    {downloadingReport === "examination-office-pdf"
+                      ? "Wird erstellt …"
+                      : "Prüfungsamt-Bericht als PDF herunterladen"}
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="download-examination-office-excel"
+                    disabled={downloadingReport !== null}
+                    onClick={() =>
+                      void downloadReport("examination-office-excel", () =>
+                        downloadExaminationOfficeExcel(examId),
+                      )
+                    }
+                  >
+                    {downloadingReport === "examination-office-excel"
+                      ? "Wird erstellt …"
+                      : "Prüfungsamt-Bericht als Excel herunterladen"}
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="download-student-results-pdf"
+                    disabled={downloadingReport !== null}
+                    onClick={() =>
+                      void downloadReport("student-results-pdf", () =>
+                        downloadStudentResultsPdf(examId),
+                      )
+                    }
+                  >
+                    {downloadingReport === "student-results-pdf"
+                      ? "Wird erstellt …"
+                      : "Notenliste als PDF herunterladen"}
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="download-student-results-excel"
+                    disabled={downloadingReport !== null}
+                    onClick={() =>
+                      void downloadReport("student-results-excel", () =>
+                        downloadStudentResultsExcel(examId),
+                      )
+                    }
+                  >
+                    {downloadingReport === "student-results-excel"
+                      ? "Wird erstellt …"
+                      : "Notenliste als Excel herunterladen"}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <p className="muted small" data-testid="schema-not-configured-hint">
+                Der Notenschlüssel ist noch nicht vollständig konfiguriert.
+              </p>
+            )}
+          </>
+        ) : (
+          <p className="muted small" data-testid="completeness-incomplete-hint">
+            <strong>{completeness.incomplete_count}</strong>{" "}
+            {completeness.incomplete_count === 1
+              ? "Studierende bzw. Studierender ist"
+              : "Studierende sind"}{" "}
+            noch unvollständig — Details dazu auf der{" "}
+            <Link to={`/klausuren/${examId}/punkte`}>Punkte-Seite</Link>.
+          </p>
+        )}
+      </div>
 
       {series.banner.visible ? (
         <div className="notice warn" role="alert" data-testid="grading-progress-banner">

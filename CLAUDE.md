@@ -16,7 +16,7 @@ internal report (`app/statistics.py` → Typst PDF + React dashboard), the §10/
 office and student-results reports (PDF + Excel, both gated on §8.1 completeness plus a fully
 configured grading schema — see `docs/open-questions.md` item 22 — via
 `app/api/reports.py::_require_exportable`), and the React UI over all of it including the
-spreadsheet-style points grid and the report-download buttons on the points-entry page. §7.5's
+spreadsheet-style points grid and the report-download buttons on the statistics page. §7.5's
 worked example passes as engine unit tests, end-to-end through HTTP, and through the statistics
 module.
 

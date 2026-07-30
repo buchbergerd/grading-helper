@@ -11,10 +11,6 @@ import {
 import { Link, useParams } from "react-router-dom";
 
 import {
-  downloadExaminationOfficeExcel,
-  downloadExaminationOfficePdf,
-  downloadStudentResultsExcel,
-  downloadStudentResultsPdf,
   errorMessages,
   getCompleteness,
   getExam,
@@ -23,7 +19,6 @@ import {
   updateExam,
   type BonusMode,
   type CompletenessResult,
-  type DownloadedFile,
   type ExamDetail,
   type PointsEntry,
   type PointsExercise,
@@ -49,13 +44,6 @@ import { parseRouteId } from "../util/id";
  * `saveWarnings` state in the component instead, and `cellExceedsMax` for the *live*,
  * client-side, per-cell check that runs regardless of whether a save has happened yet.
  */
-/** One of the four §10/§11 report downloads offered once the exam is export-ready. */
-type ReportDownloadKind =
-  | "examination-office-pdf"
-  | "examination-office-excel"
-  | "student-results-pdf"
-  | "student-results-excel";
-
 interface EditableRow {
   registrationId: number;
   matrikelnummer: string;
@@ -233,12 +221,6 @@ export default function PointsEntryPage(): JSX.Element {
 
   const [completeness, setCompleteness] = useState<CompletenessResult | null>(null);
   const [completenessMessages, setCompletenessMessages] = useState<string[]>([]);
-
-  // §10/§11 report downloads. One key tracks which of the four buttons is in flight (rather than
-  // a plain boolean) so its own label can say "Wird erstellt …" while the other three stay in
-  // their normal state — same reasoning as `saving` above, just per-button instead of per-page.
-  const [downloadingReport, setDownloadingReport] = useState<ReportDownloadKind | null>(null);
-  const [reportDownloadMessages, setReportDownloadMessages] = useState<string[]>([]);
 
   // Keyed "<exerciseId>:<visible-row-index>" -> the input element, so Enter/Arrow keys can walk
   // a column without a full re-render pass. Cleaned up on unmount/filter change via the ref
@@ -492,38 +474,6 @@ export default function PointsEntryPage(): JSX.Element {
       setGridMessages(errorMessages(error));
     } finally {
       setSaving(false);
-    }
-  }
-
-  /* -------------------------------------------------------------------------- report downloads */
-
-  /**
-   * Shared by all four §10/§11 report buttons: blob -> `URL.createObjectURL` -> a temporary
-   * `<a download>` click -> revoke, same pattern as `RegistrationsPage`'s
-   * `onDownloadAttendanceList`. A stale-UI `409` (the exam stopped being export-ready between
-   * this page loading and the click) surfaces through the same `errorMessages`/`ErrorList` path
-   * as every other error on this page rather than a bespoke one.
-   */
-  async function downloadReport(
-    kind: ReportDownloadKind,
-    fetcher: () => Promise<DownloadedFile>,
-  ): Promise<void> {
-    setDownloadingReport(kind);
-    setReportDownloadMessages([]);
-    try {
-      const { blob, filename } = await fetcher();
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = filename;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      URL.revokeObjectURL(url);
-    } catch (error) {
-      setReportDownloadMessages(errorMessages(error));
-    } finally {
-      setDownloadingReport(null);
     }
   }
 
@@ -917,88 +867,16 @@ export default function PointsEntryPage(): JSX.Element {
 
       <div className="panel">
         <h2 style={{ marginTop: 0 }}>Vollständigkeit</h2>
-        <p className="small muted">
-          Vor einem Bericht für das Prüfungsamt oder die Studierenden (§10, §11) müssen alle
-          Anwesenheiten und — bei anwesenden Studierenden — alle Aufgabenpunkte erfasst sein.
-        </p>
         <div data-testid="completeness-errors">
           <ErrorList messages={completenessMessages} />
         </div>
         {completeness === null ? (
           <p className="muted">Wird geladen …</p>
         ) : completeness.is_complete ? (
-          <>
-            <SuccessNotice>Alle Daten sind vollständig — Berichte können erzeugt werden.</SuccessNotice>
-            {grid.grading_configured ? (
-              <>
-                <div data-testid="report-download-errors">
-                  <ErrorList messages={reportDownloadMessages} />
-                </div>
-                <div className="button-row">
-                  <button
-                    type="button"
-                    data-testid="download-examination-office-pdf"
-                    disabled={downloadingReport !== null}
-                    onClick={() =>
-                      void downloadReport("examination-office-pdf", () =>
-                        downloadExaminationOfficePdf(examId),
-                      )
-                    }
-                  >
-                    {downloadingReport === "examination-office-pdf"
-                      ? "Wird erstellt …"
-                      : "Prüfungsamt-Bericht als PDF herunterladen"}
-                  </button>
-                  <button
-                    type="button"
-                    data-testid="download-examination-office-excel"
-                    disabled={downloadingReport !== null}
-                    onClick={() =>
-                      void downloadReport("examination-office-excel", () =>
-                        downloadExaminationOfficeExcel(examId),
-                      )
-                    }
-                  >
-                    {downloadingReport === "examination-office-excel"
-                      ? "Wird erstellt …"
-                      : "Prüfungsamt-Bericht als Excel herunterladen"}
-                  </button>
-                  <button
-                    type="button"
-                    data-testid="download-student-results-pdf"
-                    disabled={downloadingReport !== null}
-                    onClick={() =>
-                      void downloadReport("student-results-pdf", () =>
-                        downloadStudentResultsPdf(examId),
-                      )
-                    }
-                  >
-                    {downloadingReport === "student-results-pdf"
-                      ? "Wird erstellt …"
-                      : "Notenliste als PDF herunterladen"}
-                  </button>
-                  <button
-                    type="button"
-                    data-testid="download-student-results-excel"
-                    disabled={downloadingReport !== null}
-                    onClick={() =>
-                      void downloadReport("student-results-excel", () =>
-                        downloadStudentResultsExcel(examId),
-                      )
-                    }
-                  >
-                    {downloadingReport === "student-results-excel"
-                      ? "Wird erstellt …"
-                      : "Notenliste als Excel herunterladen"}
-                  </button>
-                </div>
-              </>
-            ) : (
-              <p className="muted small" data-testid="schema-not-configured-hint">
-                Der Notenschlüssel ist noch nicht vollständig konfiguriert.
-              </p>
-            )}
-          </>
+          <SuccessNotice>
+            Alle Daten sind vollständig — Berichte können auf der{" "}
+            <Link to={`/klausuren/${examId}/statistik`}>Statistik-Seite</Link> erzeugt werden.
+          </SuccessNotice>
         ) : (
           <>
             <p>
