@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 
 import {
   createUser,
@@ -9,6 +9,7 @@ import {
   type AdminUser,
 } from "../api/client";
 import { ErrorList, SuccessNotice } from "../components/Messages";
+import { IconMenu } from "../components/icons";
 import { useAuth } from "../auth/AuthContext";
 import { formatDate } from "../util/format";
 
@@ -25,8 +26,34 @@ export default function AdminUsersPage(): JSX.Element {
   const [newIsAdmin, setNewIsAdmin] = useState(false);
   const [creating, setCreating] = useState(false);
 
-  const [resetFor, setResetFor] = useState<number | null>(null);
+  const [openMenuFor, setOpenMenuFor] = useState<number | null>(null);
+  const [resetMode, setResetMode] = useState(false);
   const [resetPassword, setResetPassword] = useState("");
+  const menuContainerRef = useRef<HTMLDivElement | null>(null);
+
+  const closeMenu = useCallback(() => {
+    setOpenMenuFor(null);
+    setResetMode(false);
+    setResetPassword("");
+  }, []);
+
+  useEffect(() => {
+    if (openMenuFor === null) return;
+    function onPointerDown(event: MouseEvent): void {
+      if (menuContainerRef.current && !menuContainerRef.current.contains(event.target as Node)) {
+        closeMenu();
+      }
+    }
+    function onKeyDown(event: KeyboardEvent): void {
+      if (event.key === "Escape") closeMenu();
+    }
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [openMenuFor, closeMenu]);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -85,6 +112,21 @@ export default function AdminUsersPage(): JSX.Element {
     }
   }
 
+  async function onToggleAdmin(user: AdminUser): Promise<void> {
+    setNotice(null);
+    try {
+      await updateUser(user.id, { is_admin: !user.is_admin });
+      setNotice(
+        user.is_admin
+          ? `${user.username} hat keine Administrationsrechte mehr.`
+          : `${user.username} hat jetzt Administrationsrechte.`,
+      );
+      await reload();
+    } catch (error) {
+      setMessages(errorMessages(error));
+    }
+  }
+
   async function onResetPassword(event: FormEvent<HTMLFormElement>, user: AdminUser): Promise<void> {
     event.preventDefault();
     setNotice(null);
@@ -94,8 +136,7 @@ export default function AdminUsersPage(): JSX.Element {
     }
     try {
       await resetUserPassword(user.id, resetPassword);
-      setResetFor(null);
-      setResetPassword("");
+      closeMenu();
       setNotice(
         `Das Passwort von ${user.username} wurde zurückgesetzt; bestehende Sitzungen wurden beendet.`,
       );
@@ -137,55 +178,110 @@ export default function AdminUsersPage(): JSX.Element {
                   <td>{user.is_admin ? "Administration" : "Lehrende/r"}</td>
                   <td>{user.is_active ? "aktiv" : "deaktiviert"}</td>
                   <td>{formatDate(user.created_at)}</td>
-                  <td>
-                    <div className="button-row">
+                  <td className="actions-cell">
+                    <div
+                      className="actions-menu-container"
+                      ref={openMenuFor === user.id ? menuContainerRef : undefined}
+                    >
                       <button
                         type="button"
-                        onClick={() => void onToggleActive(user)}
-                        disabled={isSelf}
-                        title={
-                          isSelf
-                            ? "Das eigene Konto kann nicht deaktiviert werden."
-                            : undefined
-                        }
-                      >
-                        {user.is_active ? "Deaktivieren" : "Aktivieren"}
-                      </button>
-                      <button
-                        type="button"
+                        className="icon-button"
+                        aria-haspopup="menu"
+                        aria-expanded={openMenuFor === user.id}
+                        aria-label={`Aktionen für ${user.username}`}
+                        title="Aktionen"
                         onClick={() => {
-                          setResetFor(resetFor === user.id ? null : user.id);
-                          setResetPassword("");
+                          if (openMenuFor === user.id) {
+                            closeMenu();
+                          } else {
+                            setOpenMenuFor(user.id);
+                            setResetMode(false);
+                            setResetPassword("");
+                          }
                         }}
                       >
-                        Passwort zurücksetzen
+                        <IconMenu />
                       </button>
-                    </div>
-                    {resetFor === user.id ? (
-                      <form
-                        className="row"
-                        style={{ marginTop: "0.5rem" }}
-                        onSubmit={(event) => void onResetPassword(event, user)}
-                      >
-                        <div>
-                          <label htmlFor={`reset-${user.id}`}>Neues Passwort</label>
-                          <input
-                            id={`reset-${user.id}`}
-                            className="medium"
-                            type="password"
-                            autoComplete="new-password"
-                            value={resetPassword}
-                            onChange={(event) => setResetPassword(event.target.value)}
-                          />
+                      {openMenuFor === user.id ? (
+                        <div className="action-menu" role="menu">
+                          {resetMode ? (
+                            <form
+                              className="action-menu-reset-form"
+                              onSubmit={(event) => void onResetPassword(event, user)}
+                            >
+                              <div>
+                                <label htmlFor={`reset-${user.id}`}>Neues Passwort</label>
+                                <input
+                                  id={`reset-${user.id}`}
+                                  className="medium"
+                                  type="password"
+                                  autoComplete="new-password"
+                                  autoFocus
+                                  value={resetPassword}
+                                  onChange={(event) => setResetPassword(event.target.value)}
+                                />
+                              </div>
+                              <div className="button-row">
+                                <button type="submit" className="primary">
+                                  Zurücksetzen
+                                </button>
+                                <button type="button" onClick={closeMenu}>
+                                  Abbrechen
+                                </button>
+                              </div>
+                            </form>
+                          ) : (
+                            <>
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="action-menu-item"
+                                disabled={isSelf}
+                                title={
+                                  isSelf
+                                    ? "Das eigene Konto kann nicht deaktiviert werden."
+                                    : undefined
+                                }
+                                onClick={() => {
+                                  void onToggleActive(user);
+                                  closeMenu();
+                                }}
+                              >
+                                {user.is_active ? "Deaktivieren" : "Aktivieren"}
+                              </button>
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="action-menu-item"
+                                disabled={isSelf}
+                                title={
+                                  isSelf
+                                    ? "Die eigenen Administratorrechte können nicht entzogen werden."
+                                    : undefined
+                                }
+                                onClick={() => {
+                                  void onToggleAdmin(user);
+                                  closeMenu();
+                                }}
+                              >
+                                {user.is_admin ? "Admin-Rechte entziehen" : "Admin-Rechte geben"}
+                              </button>
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="action-menu-item"
+                                onClick={() => {
+                                  setResetMode(true);
+                                  setResetPassword("");
+                                }}
+                              >
+                                Passwort zurücksetzen
+                              </button>
+                            </>
+                          )}
                         </div>
-                        <button type="submit" className="primary">
-                          Zurücksetzen
-                        </button>
-                        <button type="button" onClick={() => setResetFor(null)}>
-                          Abbrechen
-                        </button>
-                      </form>
-                    ) : null}
+                      ) : null}
+                    </div>
                   </td>
                 </tr>
               );

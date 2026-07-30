@@ -305,6 +305,63 @@ button.link {
   align-items: center;
 }
 
+/* Per-row "⋮" actions menu (admin user table). .actions-menu-container is position: relative
+   so .action-menu can anchor to it via position: absolute — the menu then floats over the page
+   instead of adding to the row's height or the column's width, so opening/closing it never
+   reflows the table. */
+.actions-menu-container {
+  position: relative;
+  display: inline-block;
+}
+
+.action-menu {
+  position: absolute;
+  z-index: 4;
+  top: 100%;
+  right: 0;
+  margin-top: 0.35rem;
+  min-width: max-content;
+  max-width: calc(100vw - 2rem);
+  padding: 0.35rem;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  box-shadow: 0 0.25rem 0.75rem rgba(0, 0, 0, 0.15);
+}
+
+.action-menu-item {
+  display: block;
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  border: none;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--fg);
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.action-menu-item:hover:not(:disabled) {
+  background: var(--bg-soft);
+}
+
+.action-menu-item:disabled {
+  color: var(--fg-muted);
+  cursor: not-allowed;
+}
+
+.action-menu-reset-form {
+  width: 16rem;
+  padding: 0.4rem;
+}
+
+.action-menu-reset-form .button-row {
+  margin-top: 0.5rem;
+}
+
 /* A <Link> styled to look like a button.primary, e.g. the exam-overview actions
    ("Anmeldungen verwalten", "Punkte & Anwesenheit erfassen", "Statistik"). */
 a.button-link {

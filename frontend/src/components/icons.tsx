@@ -72,3 +72,14 @@ export function IconBack(): JSX.Element {
     </svg>
   );
 }
+
+/** Three horizontal lines ("hamburger") — opens a per-row actions menu. */
+export function IconMenu(): JSX.Element {
+  return (
+    <svg {...commonProps}>
+      <path d="M2.5 4.5h11" />
+      <path d="M2.5 8h11" />
+      <path d="M2.5 11.5h11" />
+    </svg>
+  );
+}
