@@ -310,7 +310,61 @@ keyword arguments (`app/statistics.py`) can still override either independently 
 The full field-by-field contract with the reasoning behind each decision lives in
 `backend/app/statistics.py`'s TypedDicts; `frontend/src/api/client.ts` mirrors them.
 
-## Deferred to later milestones
+## Examination office report (§10) — milestone 5
 
-Reports (§10–§11) — the examination-office and student-results PDF+Excel exports, both gated on
-`app/api/points.py::exam_completeness` passing for every non-excluded registration.
+Owner-scoped like every other exam route (`404`, not `403`, for another instructor's exam).
+Both routes run the same export gate before touching `app/reports/examination_office.py`:
+`app/api/points.py::exam_completeness` (§8.1 — every non-excluded registration needs `attended`
+recorded, and every attended one needs every exercise's points entered) **and** the grading
+schema being fully configured (all ten §7.1 grades present). Either failing returns
+
+```
+409 {"detail": {"errors": ["<German message>", ...]}}
+```
+
+— a list of German strings under `detail.errors`, the same shape §5.3's import failures and
+§4/§8's `422` validation errors use, but at `409` because this is "blocked by current server
+state" (an otherwise well-formed exam that isn't export-ready yet), not a malformed request.
+Up to two messages can appear together: one naming the incomplete-registration count
+("`N Anmeldung(en) sind noch unvollständig (Anwesenheit oder Punkte fehlen).`") and/or one
+saying the grading schema isn't configured yet — a client should render the whole list, not
+assume there is exactly one error.
+
+| Method | Path | Response |
+|---|---|---|
+| GET | `/api/exams/{id}/reports/examination-office/pdf` | `200 application/pdf` + `Content-Disposition`, same header convention as the attendance list, or `409` per above |
+| GET | `/api/exams/{id}/reports/examination-office/excel` | `200 application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` + `Content-Disposition`, or `409` per above |
+
+Structure: one section per **`(course_code, module_title)` pair**, not per `course_code` alone —
+a Kombinationsprüfung can legitimately show two sections sharing a `course_code` with a
+different verbatim `module_title` (§4/§5.1). Sections are German-collated
+(`app/collation.py::german_sort_key`) on that pair; rows within a section are sorted by
+Matrikelnummer as a plain string. Excluded registrations are omitted (§5.3). The PDF's table
+columns are Matr.-Nr., Nachname, Vorname, Note; the Excel export is one flat sheet (no
+per-section tabs) with an added `Modultitel` column to compensate for the lost visual grouping,
+and every cell — including Matr.-Nr. — is written as a string so a leading zero survives and
+`Note`'s mixed numeric/text values ("1,3" / "nicht bestanden" / "n.e.") round-trip unchanged.
+An exam with zero non-excluded registrations trivially satisfies the completeness gate (nothing
+is incomplete) and, once its grading schema is configured, both routes render a valid document
+with zero sections and an explanatory line rather than erroring — the gate blocks an
+*incomplete* exam, not an *empty* one.
+
+## Student results report (§11) — milestone 5
+
+Owner-scoped like every other exam route (`404`, not `403`, for another instructor's exam).
+Both routes reuse the exact same `_require_exportable` gate as the examination-office report
+above (`app/api/reports.py`) — §8.1 completeness plus a fully configured grading schema — and the
+same `409 {"detail": {"errors": [...]}}` shape on failure.
+
+| Method | Path | Response |
+|---|---|---|
+| GET | `/api/exams/{id}/reports/student-results/pdf` | `200 application/pdf` + `Content-Disposition`, same header convention as the attendance list, or `409` per above |
+| GET | `/api/exams/{id}/reports/student-results/excel` | `200 application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` + `Content-Disposition`, or `409` per above |
+
+Much simpler than §10: **no course/module grouping and no names at all** — one flat list sorted
+by Matrikelnummer as a plain string, matching common practice of posting anonymized grade lists.
+The PDF's and Excel's only two columns are Matr.-Nr., Note, in that order; the Excel export
+writes every cell — including Matr.-Nr. — as a string, same reasoning as §10 (a leading zero
+survives, and `Note`'s mixed numeric/text values round-trip unchanged). An exam with zero
+non-excluded registrations renders a valid document with zero rows and an explanatory line,
+same posture as §10's zero-sections case.

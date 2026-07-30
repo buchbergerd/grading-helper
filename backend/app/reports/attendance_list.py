@@ -227,7 +227,14 @@ def attendance_list_filename(exam: Exam) -> str:
 
 
 def content_disposition(filename: str) -> str:
-    """``Content-Disposition`` carrying both an ASCII fallback and the RFC 5987 UTF-8 name."""
-    ascii_name = sanitize_filename_part(to_ascii(filename.removesuffix(".pdf"))) + ".pdf"
+    """``Content-Disposition`` carrying both an ASCII fallback and the RFC 5987 UTF-8 name.
+
+    The extension is split off generically (``.pdf`` or, for the §10/§11 Excel exports, ``.xlsx``)
+    rather than a hardcoded ``.removesuffix(".pdf")``: the latter would leave an `.xlsx` filename's
+    ASCII fallback ending in `...xlsx.pdf`. Every caller's filename has exactly one dot-extension,
+    so a plain ``rsplit`` is exact here — no need for `pathlib`'s multi-suffix handling.
+    """
+    stem, _, extension = filename.rpartition(".")
+    ascii_name = sanitize_filename_part(to_ascii(stem)) + "." + extension
     quoted = quote(filename, safe="")
     return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quoted}"

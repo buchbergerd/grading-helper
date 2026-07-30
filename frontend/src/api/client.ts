@@ -728,17 +728,49 @@ export function downloadAttendanceList(examId: number): Promise<DownloadedFile> 
   return downloadPdf(`/exams/${examId}/reports/attendance-list`, "anwesenheitsliste.pdf");
 }
 
+/** The media type Excel report routes declare via `Accept` and receive back as `Content-Type`. */
+const EXCEL_MEDIA_TYPE =
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
+/* ----------------------------------------- examination-office / student-results reports (§10/§11) */
+
+/** `GET /exams/{id}/reports/examination-office/pdf` — gated by the §8.1 completeness check plus a
+ * fully configured grading schema; a `409 {"detail": {"errors": [...]}}` surfaces as an `ApiError`
+ * with those German messages, same as every other route here. */
+export function downloadExaminationOfficePdf(examId: number): Promise<DownloadedFile> {
+  return downloadPdf(`/exams/${examId}/reports/examination-office/pdf`, "pruefungsamt.pdf");
+}
+
+export function downloadExaminationOfficeExcel(examId: number): Promise<DownloadedFile> {
+  return downloadExcel(`/exams/${examId}/reports/examination-office/excel`, "pruefungsamt.xlsx");
+}
+
+/** `GET /exams/{id}/reports/student-results/pdf` — same §8.1/schema gate as the examination-office
+ * report above (`_require_exportable` on the backend), just a different document. */
+export function downloadStudentResultsPdf(examId: number): Promise<DownloadedFile> {
+  return downloadPdf(`/exams/${examId}/reports/student-results/pdf`, "notenliste.pdf");
+}
+
+export function downloadStudentResultsExcel(examId: number): Promise<DownloadedFile> {
+  return downloadExcel(`/exams/${examId}/reports/student-results/excel`, "notenliste.xlsx");
+}
+
 /**
- * Fetch a PDF report. Shared by every report route: they differ only in path and in the
- * filename to fall back on when the header is missing or unparseable.
+ * Fetch a binary report. Shared by every report route (PDF or Excel): they differ only in path,
+ * the `Accept`/expected media type, and the filename to fall back on when `Content-Disposition`
+ * is missing or unparseable.
  */
-async function downloadPdf(path: string, fallbackFilename: string): Promise<DownloadedFile> {
+async function downloadFile(
+  path: string,
+  accept: string,
+  fallbackFilename: string,
+): Promise<DownloadedFile> {
   let response: Response;
   try {
     response = await fetch(`${BASE}${path}`, {
       method: "GET",
       credentials: "same-origin",
-      headers: { Accept: "application/pdf" },
+      headers: { Accept: accept },
     });
   } catch {
     throw new ApiError(0, ["Der Server ist nicht erreichbar."], null);
@@ -753,6 +785,14 @@ async function downloadPdf(path: string, fallbackFilename: string): Promise<Down
   const filename =
     filenameFromContentDisposition(response.headers.get("Content-Disposition")) ?? fallbackFilename;
   return { blob, filename };
+}
+
+function downloadPdf(path: string, fallbackFilename: string): Promise<DownloadedFile> {
+  return downloadFile(path, "application/pdf", fallbackFilename);
+}
+
+function downloadExcel(path: string, fallbackFilename: string): Promise<DownloadedFile> {
+  return downloadFile(path, EXCEL_MEDIA_TYPE, fallbackFilename);
 }
 
 /* ------------------------------------------------------- internal report / statistics (§9) */
