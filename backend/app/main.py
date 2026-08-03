@@ -13,17 +13,18 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 
 from app.api import admin, auth, exams, lectures, points, registrations, reports, statistics
-from app.db import init_db
+from app.migrations import run_migrations
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Create the database schema on startup.
+    """Bring the database schema up to date on startup (``alembic upgrade head``).
 
     Done in the lifespan hook rather than at import time so that merely importing this module
-    (tests, `--help`, tooling) never touches the filesystem.
+    (tests, `--help`, tooling) never touches the filesystem. Runs against an empty database same
+    as an existing one — see ``app/migrations.py``.
     """
-    init_db()
+    run_migrations()
     yield
 
 

@@ -13,8 +13,12 @@ Two SQLite pragmas are set on **every** connection (see :func:`_set_sqlite_pragm
     Better read/write concurrency for the single-file deployment (§12/§13). Skipped for
     in-memory databases, where it is meaningless.
 
-No Alembic in this milestone: :func:`init_db` just runs ``create_all``. This is deliberate —
-the models are still churning; migrations get introduced once the schema settles.
+:func:`init_db` just runs ``create_all`` — used by tests (``tests/conftest.py``: a fresh schema
+per test, no migration history or ``alembic_version`` table involved) and by
+``scripts/generate_demo_data.py`` (a throwaway local-dev tool). The running application's own
+schema path is ``app/migrations.py::run_migrations`` (``alembic upgrade head``) instead, invoked
+from ``app/main.py``'s lifespan and ``scripts/create_admin.py``; see that module's docstring for
+why both paths exist rather than one replacing the other.
 """
 
 from __future__ import annotations

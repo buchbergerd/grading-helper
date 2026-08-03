@@ -101,9 +101,9 @@ def client_factory(session_factory: sessionmaker[Session]) -> Iterator[ClientFac
     """Build ``TestClient``s bound to the tmp_path database, each with its own cookie jar.
 
     ``TestClient`` is intentionally **not** used as a context manager: entering it runs the
-    app's lifespan, whose ``init_db()`` resolves the *configured* database URL and would create
-    ``backend/data/gradinghelper.db`` in the working tree. The ``get_db`` override is what points
-    the routes at the test database.
+    app's lifespan, whose ``run_migrations()`` resolves the *configured* database URL and would
+    create ``backend/data/gradinghelper.db`` in the working tree. The ``get_db`` override is what
+    points the routes at the test database.
     """
 
     def override_get_db() -> Iterator[Session]:

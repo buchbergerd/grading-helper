@@ -58,6 +58,11 @@ RUN uv sync --frozen --no-dev --no-install-project
 COPY backend/README.md ./
 COPY backend/app/ ./app/
 COPY backend/scripts/ ./scripts/
+# alembic.ini + alembic/ (migration history, docs/open-questions.md #11): app/main.py's lifespan
+# runs `alembic upgrade head` on every container start (app/migrations.py), so both need to be
+# in the image, not just present in the build context.
+COPY backend/alembic.ini ./
+COPY backend/alembic/ ./alembic/
 RUN uv sync --frozen --no-dev
 
 COPY --from=frontend-build /frontend/dist ./static/

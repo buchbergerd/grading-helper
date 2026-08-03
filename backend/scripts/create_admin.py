@@ -28,7 +28,8 @@ if not __package__:
 from sqlalchemy import select
 
 from app.auth.passwords import hash_password, validate_password_strength
-from app.db import SessionLocal, init_db
+from app.db import SessionLocal, get_engine
+from app.migrations import run_migrations
 from app.models import User
 
 
@@ -72,9 +73,10 @@ def main(argv: list[str] | None = None) -> int:
     if not username:
         raise SystemExit("Der Benutzername darf nicht leer sein.")
 
-    # A fresh deployment starts with an empty volume; create the schema before touching it.
-    # (Also binds SessionLocal to the configured engine.)
-    init_db()
+    # A fresh deployment starts with an empty volume; bring the schema up to date (alembic
+    # upgrade head, same path app/main.py's lifespan uses) before touching it.
+    get_engine()  # binds SessionLocal to the configured engine
+    run_migrations()
 
     password = prompt_for_password()
     user_id = create_admin(username, password)

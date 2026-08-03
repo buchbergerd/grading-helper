@@ -119,9 +119,12 @@ docker compose -f deploy/docker-compose.yml up -d
 docker compose -f deploy/docker-compose.yml ps     # should show "healthy" after ~10s
 ```
 
-The container creates the SQLite schema on startup (empty at this point — no accounts exist
-yet). Create the first admin account, interactively (the password is never passed as a CLI
-argument or environment variable — see `backend/scripts/create_admin.py`'s docstring for why):
+The container runs its database migrations on startup (`alembic upgrade head`,
+`backend/app/migrations.py`) — schema only at this point, no accounts exist yet. A version
+upgrade that adds a new migration applies it the same way, on the next container start; nothing
+extra to run by hand. Create the first admin account, interactively (the password is never passed
+as a CLI argument or environment variable — see `backend/scripts/create_admin.py`'s docstring for
+why):
 
 ```
 docker compose -f deploy/docker-compose.yml exec app python scripts/create_admin.py --username <name>

@@ -9,24 +9,33 @@ code — do not rely on a summary of it, including this one.** This file does no
 spec; it only points at it and lists the constraints an implementation is most likely to violate
 silently. If this file and the spec ever disagree, the spec wins — fix this file.
 
-Current status: **milestones 1–5 (§15.1–§15.5) complete, backend and frontend** — data model,
-auth/accounts, Lecture/Exam CRUD, registration-PDF import, attendance-list PDF, the grading
-engine (`app/grading/engine.py`), the points/attendance API (`app/api/points.py`), the §9
-internal report (`app/statistics.py` → Typst PDF + React dashboard), the §10/§11 examination-
-office and student-results reports (PDF + Excel, both gated on §8.1 completeness plus a fully
-configured grading schema — see `docs/open-questions.md` item 22 — via
-`app/api/reports.py::_require_exportable`), and the React UI over all of it including the
-spreadsheet-style points grid and the report-download buttons on the statistics page. §7.5's
-worked example passes as engine unit tests, end-to-end through HTTP, and through the statistics
-module.
+Current status: **milestones 1–6 (§15.1–§15.6), all of `SPECIFICATION.md` §15's suggested build
+order, complete, backend and frontend** — data model, auth/accounts, Lecture/Exam CRUD,
+registration-PDF import, attendance-list PDF, the grading engine (`app/grading/engine.py`), the
+points/attendance API (`app/api/points.py`), the §9 internal report (`app/statistics.py` → Typst
+PDF + React dashboard), the §10/§11 examination-office and student-results reports (PDF + Excel,
+both gated on §8.1 completeness plus a fully configured grading schema — see
+`docs/open-questions.md` item 22 — via `app/api/reports.py::_require_exportable`), and the React
+UI over all of it including the spreadsheet-style points grid and the report-download buttons on
+the statistics page. §7.5's worked example passes as engine unit tests, end-to-end through HTTP,
+and through the statistics module.
 
-**§15.6 in progress**: Docker packaging is done — `deploy/Dockerfile` and
-`deploy/docker-compose.yml` are real (not skeletons), the frontend is built and served by the
-same container as the API (`app/main.py`'s SPA-fallback route), `typst`/fonts/`cetz`/`cetz-plot`
-are all baked in at build time, the image runs as non-root with a healthcheck, and
-`docs/deployment.md` is the operator-facing runbook. **Still outstanding for §15.6**:
-exam-settings copy-forward and the explicit exam-deletion function. `SPECIFICATION.md` §15 gives
-the intended build order — follow it rather than jumping to whichever feature seems easiest.
+**§15.6** (exam-settings copy-forward, explicit exam-deletion, deployment packaging) is done:
+`app/api/exams.py::most_recent_prior_exam` + `create_exam`'s field-absent-in-request-body copy
+(§4), `DELETE /exams/{id}?confirm=true` cascading at the DB level with a confirm-dialog UI
+(`ExamDetailPage.tsx`), and `deploy/Dockerfile`/`deploy/docker-compose.yml` — real, not skeletons,
+one container serving API + built frontend, `typst`/fonts/`cetz`/`cetz-plot` baked in at build
+time, non-root with a healthcheck, `docs/deployment.md` the operator runbook. Alembic
+(`docs/open-questions.md` item 11, deferred until "before any real deployment") is also done now
+that a deployment is imminent: `app/migrations.py::run_migrations()` (`alembic upgrade head`) is
+production's schema path (called from `app/main.py`'s lifespan and `scripts/create_admin.py`);
+`app/db.py::init_db()` (`create_all`) stays for tests and the throwaway
+`scripts/generate_demo_data.py` only. `tests/test_migrations.py` guards the two staying in sync
+via `alembic.autogenerate.compare_metadata` against `Base.metadata`. Verified with a real
+`docker build` + `docker run` that a fresh container migrates and passes its healthcheck.
+
+No open implementation work is tracked against `SPECIFICATION.md` §15 right now — check
+`docs/open-questions.md` for anything that surfaces before adding new scope.
 
 **§9's one-module rule outlives its milestone.** `app/statistics.py` is the *only* place that
 turns an exam into statistics; `app/reports/internal_report.py` and `app/api/statistics.py` both

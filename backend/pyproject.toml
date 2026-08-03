@@ -17,11 +17,10 @@ dependencies = [
     "pymupdf>=1.24",             # fallback parser (§5.2)
     "typst>=0.11",               # typst-py binding, PDF report rendering (§12)
     "openpyxl>=3.1",             # .xlsx export (§10, §11)
-    # German (DIN 5007-1) collation for the attendance-list sort (§6).
-    # Not yet decided between a pure-Python table (pyuca) and system ICU
-    # bindings (PyICU, needs libicu at build/runtime) — tracked in
-    # docs/open-questions.md. Pin here once chosen.
+    "alembic>=1.18.5",           # schema migrations (docs/open-questions.md #11)
 ]
+# German (DIN 5007-1) collation for the attendance-list sort (§6) needed no new dependency —
+# resolved (docs/open-questions.md #10) as a stdlib-only sort key in app/collation.py.
 
 [dependency-groups]
 dev = [
