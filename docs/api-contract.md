@@ -64,13 +64,19 @@ Scoped to `Exam.owner`, **not** the parent lecture's owner: §4 makes the exam o
 the lecture's owner but stay independently editable, so authorizing via the lecture would let a
 reassignment silently break access control. Same `404`-not-`403` rule.
 
-Exam summary: `{id, lecture_id, lecture_name, semester, termin, exam_date, bonus_mode, owner_id}`.
-Exam detail additionally: `{exercises: [...], grading_schema: [...], registration_count,
-total_max_points, recomputation_warning}`.
+Exam summary: `{id, lecture_id, lecture_name, semester, termin, exam_date, bonus_mode,
+bonus_points, owner_id}`. Exam detail additionally: `{exercises: [...], grading_schema: [...],
+registration_count, total_max_points, recomputation_warning}`.
 
 - `exam_date`: `YYYY-MM-DD` or `null` on the wire (German `DD.MM.YYYY` formatting is a
   presentation concern — §14 #6 — applied in the UI and in reports, not in the API).
 - `bonus_mode`: `"ALWAYS" | "ONLY_IF_PASSING_WITHOUT_BONUS"` (§7.3).
+- `bonus_points`: a decimal string, so follows the string rule above. **One amount for the whole
+  exam** (§7.3), applied identically to every non-excluded student — not a per-registration
+  field. Defaults to `"0"` and is rejected with `422` if negative. Editing it after points have
+  already been entered can move every non-excluded student's grade in a single edit and is
+  covered by the same `recomputation_warning` mechanism as `exercises`/`grading_schema` below —
+  unlike `bonus_mode`, which is not (see the warning's own paragraph).
 - `exercises`: `[{id, name, max_points: "12.5", position}]` — ordered by `position`. On a write,
   `position` is accepted (so a detail response can be sent straight back) but **ignored**:
   positions are renumbered `1..N` server-side in submitted order. `id` **is** meaningful: an item
@@ -87,27 +93,33 @@ total_max_points, recomputation_warning}`.
   (the backend is authoritative; the frontend may preview but never sends it).
 - `total_max_points`: sum of the exercises' `max_points`, as a string. Response-only.
 - `recomputation_warning`: `{"changed": bool, "affected_registrations": int, "grades_changed":
-  int}` or `null` (§8.1). Non-`null` only on a `PATCH` response, and only when `exercises` or
-  `grading_schema` were replaced **and** the exam already has registrations — i.e. grade
-  thresholds just moved under existing student data and the UI must say so visibly.
-  `affected_registrations` counts registrations that already carry attendance or points (a
-  coarse "could this edit matter" count). `grades_changed` is the precise one: the number of
-  non-excluded registrations whose **computed grade string** differs before vs. after the edit —
-  taken as a snapshot immediately before the mutation and re-derived immediately after. A
-  registration whose grade was not previously computable (schema never configured, or attendance
-  not yet recorded) and now is counts as changed. Deliberately stricter than
-  `affected_registrations`: a percentage edit that still floors to the same 0.5-point threshold
-  (§7.2) reports `grades_changed: 0` even though registrations carry data — an always-firing
-  warning teaches instructors to ignore it. Nothing here is a stored column (no `Exam`/
+  int}` or `null` (§8.1). Non-`null` only on a `PATCH` response, and only when `exercises`,
+  `grading_schema`, or `bonus_points` changed **and** the exam already has registrations — i.e.
+  grade thresholds (or the exam-wide bonus everyone's total is compared against) just moved
+  under existing student data and the UI must say so visibly. `affected_registrations` counts
+  registrations that already carry attendance or points (a coarse "could this edit matter"
+  count). `grades_changed` is the precise one: the number of non-excluded registrations whose
+  **computed grade string** differs before vs. after the edit — taken as a snapshot immediately
+  before the mutation (using the *old* `bonus_points`, if that's what's changing) and re-derived
+  immediately after. A registration whose grade was not previously computable (schema never
+  configured, or attendance not yet recorded) and now is counts as changed. Deliberately
+  stricter than `affected_registrations`: a percentage edit that still floors to the same
+  0.5-point threshold (§7.2), or a `bonus_points` PATCH sent with the exam's current value,
+  reports `grades_changed: 0` even though registrations carry data — an always-firing warning
+  teaches instructors to ignore it. Nothing here is a stored column (no `Exam`/
   `StudentRegistration` field holds a grade); "recomputing" means re-deriving it from
-  `ExercisePoints` and the exam's current exercises/schema, same as every other read.
+  `ExercisePoints` and the exam's current exercises/schema/bonus, same as every other read.
+  **`bonus_mode` is the one exception**: it is applied before the snapshot is taken (a
+  historical sharp edge, not a deliberate design choice worth copying), so a `bonus_mode`-only
+  edit never triggers this warning at all, and a `PATCH` changing `bonus_mode` together with one
+  of the three fields above only reflects the other field's effect, not the mode's.
 - `lecture_name` is a convenience copy of the parent lecture's name; it is never derived from a
   registration PDF (§4).
 
 | Method | Path | Body | Response |
 |---|---|---|---|
 | GET | `/api/exams?lecture_id=` | — | `[exam summary]`, the caller's own, most recent sitting first. `lecture_id` is a plain filter, **not** an ownership check on the lecture: a reassigned exam may hang under someone else's lecture and must stay listable by its owner. An unknown/foreign `lecture_id` yields `[]` |
-| POST | `/api/lectures/{id}/exams` | `{semester, termin, exam_date?, bonus_mode?, exercises?, grading_schema?}` | `201` + exam detail. Omitted `bonus_mode`/`exercises`/`grading_schema` are copied forward from the lecture's most recent prior exam (§4 lists all three) — a one-time copy, nothing stays linked. If there is no prior exam they start empty and `bonus_mode` defaults to `"ALWAYS"`. **Sending the field explicitly always wins, including an empty list** — "no exercises yet" must be expressible, so absent ≠ `[]` |
+| POST | `/api/lectures/{id}/exams` | `{semester, termin, exam_date?, bonus_mode?, bonus_points?, exercises?, grading_schema?}` | `201` + exam detail. Omitted `bonus_mode`/`exercises`/`grading_schema` are copied forward from the lecture's most recent prior exam (§4 lists all three) — a one-time copy, nothing stays linked. If there is no prior exam they start empty and `bonus_mode` defaults to `"ALWAYS"`. **Sending the field explicitly always wins, including an empty list** — "no exercises yet" must be expressible, so absent ≠ `[]`. `bonus_points` is **not** part of the copy-forward list — it's this exam's own entered result, not configuration, so an absent value always starts at `"0"` regardless of the prior exam |
 | GET | `/api/exams/{id}` | — | exam detail |
 | PATCH | `/api/exams/{id}` | any of the create fields, plus `owner_id` | `200` + exam detail. Replacing `exercises`/`grading_schema` is a full replace, not a merge |
 | DELETE | `/api/exams/{id}` | — | `204`, cascades to registrations and points (§13). `409` unless `?confirm=true` |
@@ -134,17 +146,18 @@ admin reset, and self-service change), so the frontend needs only one German-mes
 All routes owner-scoped through the exam; another instructor gets `404`, not `403`.
 
 `RegistrationOut`: `{id, exam_id, matrikelnummer, nachname, vorname, course_code, module_title,
-versuch, kommentar, flagged, excluded, attended, bonus_points, source_filename}`.
-`matrikelnummer` is a **string** (leading zeros are meaningful); `bonus_points` is a decimal and
-so follows the string rule above; `attended` is `true | false | null`, where `null` means "not
-yet recorded" and is deliberately distinct from `false` ("nicht erschienen", §7.4).
+versuch, kommentar, flagged, excluded, attended, source_filename}`.
+`matrikelnummer` is a **string** (leading zeros are meaningful); `attended` is
+`true | false | null`, where `null` means "not yet recorded" and is deliberately distinct from
+`false` ("nicht erschienen", §7.4). There is no `bonus_points` here — it moved to the exam (§7.3,
+see the Exams section above): one amount for the whole exam, not one per student.
 
 | Method | Path | Body | Response |
 |---|---|---|---|
 | POST | `/api/exams/{id}/registrations/import` | `multipart/form-data`: repeated field **`files`** (one or more PDFs) + optional `replace_existing` | `201` + `{imported_total, replaced_count, files: [...], warnings: [...]}` |
 | GET | `/api/exams/{id}/registrations` | — | `[RegistrationOut]`, optional `course_code` filter |
 | POST | `/api/exams/{id}/registrations` | `{matrikelnummer, nachname, vorname, course_code, module_title, versuch, kommentar?, flagged?, excluded?}` | `201` — the manual late-registration path (§5.3). `course_code`/`module_title` are required: there is no PDF to take them from |
-| PATCH | `/api/registrations/{id}` | any subset, incl. `excluded`, `attended`, `bonus_points` | `200` + `RegistrationOut` |
+| PATCH | `/api/registrations/{id}` | any subset, incl. `excluded`, `attended` | `200` + `RegistrationOut` |
 | DELETE | `/api/registrations/{id}` | — | `204`. A **real** deletion, for a row added in error — distinct from `excluded` |
 | DELETE | `/api/exams/{id}/registrations?confirm=true` | — | `204`. Deletes **every** registration of the exam (including excluded ones) and, by cascade, all their `ExercisePoints` — "Alle entfernen", a reset of the import. `409` unless `?confirm=true`. Distinct from `excluded`: that flag hides a student while keeping their data for audit (§5.3); this route destroys the rows and any grade already entered for them, with no undo |
 | GET | `/api/exams/{id}/registrations/count` | — | `{total, per_course: [{course_code, count}]}`, excluded students already omitted (§6's head count) |
@@ -193,14 +206,16 @@ exam (`/api/registrations/{id}/points`); another instructor gets `404`, not `403
 elsewhere. `app/api/points.py` owns all four routes.
 
 Neither `final_total` nor `grade` is ever a stored column — every response computes them fresh
-from `ExercisePoints`, `bonus_points`, `attended` and the exam's current exercises/grading schema
-(`app/grading/engine.py::compute_grade`). There is nothing to keep in sync; there is only ever
-"read it now".
+from `ExercisePoints`, `attended`, the exam's `bonus_points`/`bonus_mode` and its current
+exercises/grading schema (`app/grading/engine.py::compute_grade`). There is nothing to keep in
+sync; there is only ever "read it now".
 
 `PointsEntryOut` (one registration's row, used by the grid and by both save routes):
-`{id, matrikelnummer, nachname, vorname, course_code, versuch, attended, bonus_points, points:
-{<exercise_id as string>: "value"}, raw_total, final_total, grade, status, is_complete}`.
-`points` only carries exercises that actually have an `ExercisePoints` row — a missing key means
+`{id, matrikelnummer, nachname, vorname, course_code, versuch, attended, points:
+{<exercise_id as string>: "value"}, raw_total, final_total, grade, status, is_complete}`. There
+is no `bonus_points` here — it is the exam-wide field on `PointsGridOut` below (§7.3), not a
+per-row value. `points` only carries exercises that actually have an `ExercisePoints` row — a
+missing key means
 "not entered", never an implicit zero (§8.1). `status` is the grading engine's English
 `GradeStatus` token (`GRADED` / `FAILED` / `NOT_ATTENDED` / `ATTENDANCE_NOT_RECORDED`) — for UI
 branching only, never shown to a user; display `grade` instead. `grade` and `status` are `null`
@@ -212,9 +227,9 @@ nullable, and a client must not hide `raw_total` just because `final_total`/`gra
 
 | Method | Path | Body | Response |
 |---|---|---|---|
-| GET | `/api/exams/{id}/points` | — | `{exercises: [...], grading_schema: [...], bonus_mode, grading_configured, entries: [PointsEntryOut]}`. Optional `course_code` filter. One entry per **non-excluded** registration (§5.3), sorted by Matrikelnummer |
-| PUT | `/api/registrations/{id}/points` | `{attended?, bonus_points?, points?}` | `200` + `{registration: PointsEntryOut, warnings: [German strings]}` |
-| PUT | `/api/exams/{id}/points` | `{entries: [{registration_id, attended?, bonus_points?, points?}, ...]}` | `200` + `{entries: [PointsEntryOut], warnings: [...]}`. One transaction, all rows or none |
+| GET | `/api/exams/{id}/points` | — | `{exercises: [...], grading_schema: [...], bonus_mode, bonus_points, grading_configured, entries: [PointsEntryOut]}`. Optional `course_code` filter. One entry per **non-excluded** registration (§5.3), sorted by Matrikelnummer |
+| PUT | `/api/registrations/{id}/points` | `{attended?, points?}` | `200` + `{registration: PointsEntryOut, warnings: [German strings]}` |
+| PUT | `/api/exams/{id}/points` | `{entries: [{registration_id, attended?, points?}, ...]}` | `200` + `{entries: [PointsEntryOut], warnings: [...]}`. One transaction, all rows or none |
 | GET | `/api/exams/{id}/completeness` | — | `{is_complete, incomplete_count, incomplete_students: [{id, matrikelnummer, nachname, vorname, attendance_missing, missing_exercises: [names]}]}` (§8.1) |
 
 **Both `PUT` routes are a full replace of each row's entry state, never a merge** — this is the
@@ -223,12 +238,13 @@ one place in the API where "field absent" does *not* mean "leave unchanged":
 - a `points` map key that is absent from the payload, or present with JSON `null`, **deletes**
   that exercise's `ExercisePoints` row (never coerced to a stored zero — §8.1 requires "not
   entered" and "entered zero" to stay distinguishable);
-- an absent `attended` sets it to `null` ("not yet recorded");
-- an absent `bonus_points` sets it to `"0"`.
+- an absent `attended` sets it to `null` ("not yet recorded").
 
 Points entered above an exercise's `max_points` are **saved anyway** and reported back in
-`warnings` — never rejected, never silently clamped (§8: "typos happen"). Negative points or
-negative `bonus_points`, and any write to an **excluded** registration, are rejected with `422`.
+`warnings` — never rejected, never silently clamped (§8: "typos happen"). Negative points, and
+any write to an **excluded** registration, are rejected with `422`. Negative `bonus_points` is
+rejected the same way, but on `PATCH /api/exams/{id}` (see the Exams section) — it is an exam
+field now, not part of a points save.
 Marking `attended = false` does **not** clear previously entered `points` — resending the same
 `points` map while flipping `attended` keeps that data in the database (flipping back to `true`
 later does not require re-transcribing the exam), while §7.4 means those points play no role in

@@ -56,6 +56,7 @@ def student_note(
     thresholds: dict[str, Decimal],
     max_points: Decimal,
     bonus_mode: BonusMode,
+    bonus_points: Decimal,
 ) -> str:
     """The registration's §10/§11 "Note" cell, already German-formatted (see module docstring).
 
@@ -86,7 +87,7 @@ def student_note(
 
     result = compute_grade(
         exercise_points=entered_in_order,
-        bonus_points=registration.bonus_points,
+        bonus_points=bonus_points,
         attended=registration.attended,
         bonus_mode=bonus_mode,
         thresholds=thresholds,

@@ -47,7 +47,6 @@ class StudentRegistration(Base):
     # completeness gate must be able to distinguish from an explicit False ("nicht erschienen").
     # Therefore no default of any kind here.
     attended: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
-    bonus_points: Mapped[Decimal] = mapped_column(DecimalText, default=Decimal(0), nullable=False)
     source_filename: Mapped[str | None] = mapped_column(String(512), nullable=True)
 
     exam: Mapped[Exam] = relationship(back_populates="registrations")

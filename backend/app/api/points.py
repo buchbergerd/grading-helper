@@ -90,12 +90,14 @@ def registration_points_row(
     thresholds: Mapping[str, Decimal] | None,
     max_points: Decimal,
     bonus_mode: BonusMode,
+    bonus_points: Decimal,
 ) -> PointsEntryOut:
     """One registration's row for the §8 grid, or the response of a points save.
 
     :param thresholds: from :func:`_thresholds_or_none` — ``None`` skips grade computation
         entirely rather than calling :func:`~app.grading.engine.compute_grade` on an incomplete
         schema (see this module's docstring).
+    :param bonus_points: the exam's single amount (§7.3) — not per registration.
     """
     entered = {points.exercise_id: points.points for points in registration.exercise_points}
     exercise_ids = [exercise.id for exercise in exercises]
@@ -115,7 +117,7 @@ def registration_points_row(
     if thresholds is not None:
         result = compute_grade(
             exercise_points=entered_in_order,
-            bonus_points=registration.bonus_points,
+            bonus_points=bonus_points,
             attended=registration.attended,
             bonus_mode=bonus_mode,
             thresholds=thresholds,
@@ -139,7 +141,6 @@ def registration_points_row(
         course_code=registration.course_code,
         versuch=registration.versuch,
         attended=registration.attended,
-        bonus_points=registration.bonus_points,
         points={str(exercise_id): value for exercise_id, value in entered.items()},
         raw_total=raw_total,
         final_total=final_total,
@@ -226,7 +227,7 @@ def grade_snapshot(exam: Exam) -> dict[int, str | None]:
         ]
         result = compute_grade(
             exercise_points=entered_in_order,
-            bonus_points=registration.bonus_points,
+            bonus_points=exam.bonus_points,
             attended=registration.attended,
             bonus_mode=exam.bonus_mode,
             thresholds=thresholds,
@@ -247,8 +248,8 @@ def _validate_points_payload(
     """German validation errors for one row (empty = valid). Never mutates anything.
 
     §5.3/§8: an excluded registration never receives a grade, so writing points to one is
-    rejected outright rather than silently accepted and ignored. Negative points or bonus are
-    rejected (§8 only asks for a warning on *exceeding* ``max_points``, never on going negative).
+    rejected outright rather than silently accepted and ignored. Negative points are rejected
+    (§8 only asks for a warning on *exceeding* ``max_points``, never on going negative).
     """
     if registration.excluded:
         return [
@@ -256,9 +257,6 @@ def _validate_points_payload(
         ]
 
     errors: list[str] = []
-    if payload.bonus_points is not None and payload.bonus_points < 0:
-        errors.append(f"{registration.matrikelnummer}: Bonuspunkte dürfen nicht negativ sein.")
-
     exercises_by_id = {exercise.id: exercise for exercise in exam.exercises}
     for key, value in payload.points.items():
         try:
@@ -291,9 +289,6 @@ def _apply_points_save(
     (§8's PUT is a full replace, not a merge): both mean "not entered".
     """
     registration.attended = payload.attended
-    registration.bonus_points = (
-        payload.bonus_points if payload.bonus_points is not None else Decimal(0)
-    )
 
     existing = {points.exercise_id: points for points in registration.exercise_points}
     warnings: list[str] = []
@@ -349,13 +344,16 @@ def read_points_grid(
     registrations.sort(key=lambda item: item.matrikelnummer)
 
     entries = [
-        registration_points_row(item, exam.exercises, thresholds, max_points, exam.bonus_mode)
+        registration_points_row(
+            item, exam.exercises, thresholds, max_points, exam.bonus_mode, exam.bonus_points
+        )
         for item in registrations
     ]
     return PointsGridOut(
         exercises=[ExerciseOut.model_validate(exercise) for exercise in exam.exercises],
         grading_schema=_grading_schema_out(exam, max_points),
         bonus_mode=exam.bonus_mode,
+        bonus_points=exam.bonus_points,
         grading_configured=thresholds is not None,
         entries=entries,
     )
@@ -378,13 +376,12 @@ def read_completeness(exam_id: int, user: CurrentUser, db: DbSession) -> Complet
 def save_points(
     registration_id: int, payload: PointsSaveRequest, user: CurrentUser, db: DbSession
 ) -> PointsSaveResult:
-    """Save one registration's attendance/points/bonus — a **full replace**, not a merge (§8).
+    """Save one registration's attendance/points — a **full replace**, not a merge (§8).
 
     * a ``points`` entry that is absent from the payload, or present with JSON ``null``,
       **deletes** that exercise's ``ExercisePoints`` row — never coerced to a stored zero, since
       §8.1 requires "not entered" and "entered zero" to stay distinguishable;
-    * an absent ``attended`` sets it to ``null`` ("not yet recorded", §4);
-    * an absent ``bonus_points`` sets it to ``Decimal(0)``.
+    * an absent ``attended`` sets it to ``null`` ("not yet recorded", §4).
 
     Marking ``attended = false`` does **not** clear previously entered points: whatever the
     payload's ``points`` map says about each exercise is applied exactly as it would be for any
@@ -394,9 +391,10 @@ def save_points(
     role in the grade (``"n.e."``) for as long as ``attended`` stays ``false``.
 
     Points entered above an exercise's ``max_points`` are saved and reported back as a
-    **warning**, never rejected or silently clamped (§8: "typos happen"). Negative points,
-    negative bonus points, or any write to an **excluded** registration are rejected with `422`
-    (an excluded student never receives a grade, §5.3).
+    **warning**, never rejected or silently clamped (§8: "typos happen"). Negative points, or any
+    write to an **excluded** registration, are rejected with `422` (an excluded student never
+    receives a grade, §5.3). ``bonus_points`` is not part of this payload — it is the exam's
+    single amount, edited via ``PATCH /api/exams/{id}`` (§7.3).
     """
     registration = get_owned_registration(db, user, registration_id)
     exam = registration.exam
@@ -409,7 +407,7 @@ def save_points(
     thresholds = _thresholds_or_none(exam)
     max_points = total_max_points(exam)
     row = registration_points_row(
-        registration, exam.exercises, thresholds, max_points, exam.bonus_mode
+        registration, exam.exercises, thresholds, max_points, exam.bonus_mode, exam.bonus_points
     )
     return PointsSaveResult(registration=row, warnings=warnings)
 
@@ -446,9 +444,7 @@ def save_points_bulk(
             errors.append(f"Anmeldung {entry.registration_id} gehört nicht zu dieser Prüfung.")
             continue
 
-        row_payload = PointsSaveRequest(
-            attended=entry.attended, bonus_points=entry.bonus_points, points=entry.points
-        )
+        row_payload = PointsSaveRequest(attended=entry.attended, points=entry.points)
         errors.extend(_validate_points_payload(exam, registration, row_payload))
         resolved.append((registration, row_payload))
 
@@ -463,7 +459,7 @@ def save_points_bulk(
     max_points = total_max_points(exam)
     entries_out = [
         registration_points_row(
-            registration, exam.exercises, thresholds, max_points, exam.bonus_mode
+            registration, exam.exercises, thresholds, max_points, exam.bonus_mode, exam.bonus_points
         )
         for registration, _ in resolved
     ]

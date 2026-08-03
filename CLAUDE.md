@@ -98,6 +98,12 @@ implementing agent, not because they're exhaustive. Section references are to `S
 - **Bonus mode semantics** (§7.3): `ONLY_IF_PASSING_WITHOUT_BONUS` checks `raw_total` alone
   against the passing (4.0) threshold *before* deciding whether bonus applies at all — it is not
   "cap the final grade at pass." Get this backwards and bonus silently turns fails into passes.
+  `bonus_points` itself is **one amount per exam** (`Exam.bonus_points`), applied identically to
+  every non-excluded student — not a per-`StudentRegistration` field. Editing it after points
+  exist must trigger the same §8.1 recomputation warning as an `exercises`/`grading_schema` edit
+  (`app/api/exams.py::update_exam`): the before/after grade snapshot must bracket the mutation,
+  and the assignment needs a `db.flush()` before the "after" snapshot's `db.expire_all()` or the
+  warning silently reports zero changes even when grades moved.
 - **Attendance overrides grade** (§7.4): `attended = false` → "n.e.", full stop, regardless of
   points. `attended = true` and below passing → "nicht bestanden" (text, not a number).
 - **Import completeness check must hard-fail, not warn** (§5.3): parsed `Nr.` values must be a

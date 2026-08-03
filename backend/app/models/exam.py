@@ -59,6 +59,9 @@ class Exam(Base):
         default=BonusMode.ALWAYS,
         nullable=False,
     )
+    # One amount for the whole exam (§7.3), applied identically to every non-excluded student —
+    # not per student. DecimalText, never Numeric/Float — see app/types.py and §7.0.
+    bonus_points: Mapped[Decimal] = mapped_column(DecimalText, default=Decimal(0), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
     )

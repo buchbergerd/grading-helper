@@ -15,6 +15,7 @@ const EXAM: ExamDetail = {
   termin: "1. Termin",
   exam_date: "2024-02-15",
   bonus_mode: "ALWAYS",
+  bonus_points: "0",
   owner_id: 1,
   registration_count: 3,
   exercises: [],
@@ -34,7 +35,6 @@ const REG_NORMAL: RegistrationOut = {
   flagged: false,
   excluded: false,
   attended: null,
-  bonus_points: "0.00",
   source_filename: "a.pdf",
 };
 

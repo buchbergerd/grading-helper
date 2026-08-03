@@ -150,11 +150,14 @@ def populated_exam(instructor_client: TestClient, lecture_id: int) -> int:
 
     Deliberately mixed rather than tidy: a passing student, a failing one, a not-attended one, one
     whose attendance was never recorded, one who attended but is missing a point entry, an
-    excluded one, and a second-attempt student — plus a bonus that pushes ``final_total`` past
-    ``max_points`` (§7.3 ALWAYS is uncapped), which is the case that falls off a histogram whose
-    range is derived from ``max_points`` instead of the observed maximum.
+    excluded one, and a second-attempt student — plus an exam-wide bonus (§7.3: one amount, not
+    per student) that pushes the top student's ``final_total`` past ``max_points`` (§7.3 ALWAYS
+    is uncapped), which is the case that falls off a histogram whose range is derived from
+    ``max_points`` instead of the observed maximum. The same +5 lands on every other
+    attended/complete student too, but none of it moves anyone across the pass/fail line, so it
+    disturbs no other assertion in this file.
     """
-    exam = create_exam(instructor_client, lecture_id)
+    exam = create_exam(instructor_client, lecture_id, bonus_points="5")
     exam_id = int(exam["id"])
     first, second = (int(e["id"]) for e in exam["exercises"])
 
@@ -179,7 +182,6 @@ def populated_exam(instructor_client: TestClient, lecture_id: int) -> int:
         instructor_client,
         int(over_max["id"]),
         attended=True,
-        bonus_points="5",
         points={str(first): "30", str(second): "30"},
     )
 

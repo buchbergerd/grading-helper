@@ -13,7 +13,8 @@ they are left untouched) it randomly assigns:
   to the nearest 0.5 like a real transcription would be, occasionally exceeding ``max_points`` to
   exercise the over-max warning path (``app/api/points.py::_apply_points_save``); attended
   students occasionally miss one exercise on purpose, again for the completeness gate;
-* **bonus points** — a minority of students get a small bonus (§7.3).
+* **bonus points** — one amount for the whole exam, applied to every student (§7.3): a minority
+  of exams get a small bonus, the rest none.
 
 This is a throwaway local-data generator, not a fixture: nothing it writes is committed, and it
 is not deterministic unless ``--seed`` is given (see `test_data/README.md` for the *committed*,
@@ -78,17 +79,15 @@ def pick_exam(db: Session, exam_id: int | None) -> Exam:
 def fill_registration(
     registration: StudentRegistration, exercises: list[Exercise], rng: random.Random
 ) -> None:
-    """Randomly assign attendance, points and bonus to one non-excluded registration in place."""
+    """Randomly assign attendance and points to one non-excluded registration in place."""
     registration.exercise_points.clear()
 
     roll = rng.random()
     if roll < NOT_ATTENDED_RATE:
         registration.attended = False
-        registration.bonus_points = Decimal(0)
         return
     if roll < NOT_ATTENDED_RATE + (1 - ATTENDED_RATE - NOT_ATTENDED_RATE):
         registration.attended = None
-        registration.bonus_points = Decimal(0)
         return
 
     registration.attended = True
@@ -104,11 +103,12 @@ def fill_registration(
         points = quantize_to_half(raw, cap)
         registration.exercise_points.append(ExercisePoints(exercise_id=exercise.id, points=points))
 
-    registration.bonus_points = (
-        quantize_to_half(rng.uniform(0.5, 3.0), Decimal(10))
-        if rng.random() < BONUS_RATE
-        else Decimal(0)
-    )
+
+def pick_bonus_points(rng: random.Random) -> Decimal:
+    """The exam's single §7.3 bonus amount — not per student."""
+    if rng.random() < BONUS_RATE:
+        return quantize_to_half(rng.uniform(0.5, 3.0), Decimal(10))
+    return Decimal(0)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -136,6 +136,7 @@ def main(argv: list[str] | None = None) -> int:
 
         for registration in registrations:
             fill_registration(registration, exercises, rng)
+        exam.bonus_points = pick_bonus_points(rng)
         db.commit()
 
         db.refresh(exam)

@@ -272,7 +272,16 @@ def test_attendance_defaults_to_null_not_false(
     with session_factory() as fresh:
         registration = fresh.scalars(select(StudentRegistration)).one()
         assert registration.attended is None
-        assert registration.bonus_points == Decimal(0)
+
+
+def test_exam_bonus_points_defaults_to_zero(
+    session_factory: sessionmaker[Session], exam: Exam
+) -> None:
+    """§7.3: bonus_points is one amount per exam; an exam not given one starts at 0."""
+    with session_factory() as fresh:
+        fresh_exam = fresh.get(Exam, exam.id)
+        assert fresh_exam is not None
+        assert fresh_exam.bonus_points == Decimal(0)
 
 
 def test_engine_is_isolated_per_test(engine: Engine) -> None:

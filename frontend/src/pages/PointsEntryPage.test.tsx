@@ -15,6 +15,7 @@ const EXAM: ExamDetail = {
   termin: "1. Termin",
   exam_date: "2024-02-15",
   bonus_mode: "ALWAYS",
+  bonus_points: "0",
   owner_id: 1,
   registration_count: 3,
   exercises: [],
@@ -38,6 +39,7 @@ const GRID: PointsGrid = {
     { grade: "4.0", percentage: "50", threshold_points: "12.50" },
   ],
   bonus_mode: "ALWAYS",
+  bonus_points: "0.00",
   grading_configured: true,
   entries: [
     {
@@ -48,7 +50,6 @@ const GRID: PointsGrid = {
       course_code: "B.Sc. WiIng ET/IT",
       versuch: 1,
       attended: true,
-      bonus_points: "0.00",
       points: { "1": "12.50" },
       raw_total: "12.50",
       final_total: "12.50",
@@ -64,7 +65,6 @@ const GRID: PointsGrid = {
       course_code: "B.Sc. WiIng ET/IT",
       versuch: 1,
       attended: null,
-      bonus_points: "0.00",
       points: {},
       raw_total: "0.00",
       final_total: null,
@@ -80,7 +80,6 @@ const GRID: PointsGrid = {
       course_code: "M.Sc. ET",
       versuch: 2,
       attended: false,
-      bonus_points: "0.00",
       points: { "1": "5.00" },
       raw_total: "5.00",
       final_total: null,
@@ -129,7 +128,6 @@ function echoPut(init: RequestInit | undefined): Response {
     entries: Array<{
       registration_id: number;
       attended: boolean | null;
-      bonus_points: string | null;
       points: Record<string, string | null>;
     }>;
   };
@@ -147,7 +145,6 @@ function echoPut(init: RequestInit | undefined): Response {
       course_code: template?.course_code ?? "",
       versuch: template?.versuch ?? 1,
       attended: row.attended,
-      bonus_points: row.bonus_points ?? "0.00",
       points,
       raw_total: "0.00",
       final_total: row.attended === false ? null : "0.00",
@@ -189,7 +186,6 @@ function putBodyOf(mock: ReturnType<typeof installFetchMock>): {
   entries: Array<{
     registration_id: number;
     attended: boolean | null;
-    bonus_points: string | null;
     points: Record<string, string | null>;
   }>;
 } {
@@ -275,100 +271,95 @@ describe("PointsEntryPage — empty vs. zero (§8.1)", () => {
     });
   });
 
-  it("clearing the shared bonus field sends null for every row (the server's own default-to-0), never the empty string", async () => {
+});
+
+describe("PointsEntryPage — the exam-wide bonus_points field (§7.3)", () => {
+  function patchCallsTo(mock: ReturnType<typeof installFetchMock>, path: string) {
+    return mock.mock.calls.filter((c) => String(c[0]) === path && c[1]?.method === "PATCH");
+  }
+
+  it("shows the grid's bonus_points on load", async () => {
+    renderPage();
+
+    const bonusField = (await screen.findByTestId("bonus-points")) as HTMLInputElement;
+    expect(bonusField.value).toBe("0.00");
+  });
+
+  it("marks the page dirty when bonus_points is edited", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    const bonusField = await screen.findByTestId("bonus-points");
+    expect(screen.queryByTestId("unsaved-indicator")).toBeNull();
+
+    await user.clear(bonusField);
+    await user.type(bonusField, "3");
+
+    expect(screen.getByTestId("unsaved-indicator")).not.toBeNull();
+  });
+
+  it("Speichern with bonus_points changed PATCHes /api/exams/7 with only bonus_points, alongside the points PUT", async () => {
     const user = userEvent.setup();
     const mock = renderPage();
 
-    // All three fixture rows start at "0.00" — clear the shared field entirely.
-    const bonusField = await screen.findByTestId("bonus-all");
+    const bonusField = await screen.findByTestId("bonus-points");
     await user.clear(bonusField);
+    await user.type(bonusField, "3");
     await user.click(screen.getByRole("button", { name: "Speichern" }));
 
     await waitFor(() => {
-      const body = putBodyOf(mock);
-      // Never "" — the decimal-string contract rejects an empty string outright (a 422 for the
-      // whole batch), so an emptied bonus field must ask for the server's own default instead.
-      for (const row of body.entries) {
-        expect(row.bonus_points).toBeNull();
-      }
+      expect(patchCallsTo(mock, "/api/exams/7").length).toBe(1);
     });
-  });
-});
+    const [, init] = patchCallsTo(mock, "/api/exams/7")[0] ?? [];
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    expect(body).toEqual({ bonus_points: "3" });
 
-describe("PointsEntryPage — the single, exam-wide bonus field (§7.3)", () => {
-  it("fans a typed value out to every row's bonus_points on save, not just the visible ones", async () => {
+    expect(
+      mock.mock.calls.some((c) => String(c[0]) === "/api/exams/7/points" && c[1]?.method === "PUT"),
+    ).toBe(true);
+  });
+
+  it("Speichern with bonus_points untouched never PATCHes /api/exams/7", async () => {
     const user = userEvent.setup();
     const mock = renderPage();
 
     await screen.findByTestId("points-row-1");
-    await user.selectOptions(screen.getByLabelText("Studiengang"), "B.Sc. WiIng ET/IT");
-    expect(screen.queryByTestId("points-row-3")).toBeNull(); // Clara (M.Sc. ET) is filtered out
-
-    const bonusField = await screen.findByTestId("bonus-all");
-    await user.clear(bonusField);
-    await user.type(bonusField, "2");
-
+    // Touch something unrelated so Speichern is enabled, without touching the bonus field.
+    await user.click(screen.getByTestId("attended-2-present"));
     await user.click(screen.getByRole("button", { name: "Speichern" }));
 
     await waitFor(() => {
-      const body = putBodyOf(mock);
-      // All three rows, including Clara who was hidden by the course filter throughout.
-      for (const registrationId of [1, 2, 3]) {
-        const row = body.entries.find((entry) => entry.registration_id === registrationId);
-        expect(row?.bonus_points).toBe("2");
-      }
+      expect(
+        mock.mock.calls.some((c) => String(c[0]) === "/api/exams/7/points" && c[1]?.method === "PUT"),
+      ).toBe(true);
     });
+    expect(patchCallsTo(mock, "/api/exams/7").length).toBe(0);
   });
 
-  it("shows a mixed-value hint and leaves the field blank when rows disagree, without overwriting until edited", async () => {
+  it("clearing a non-zero field and saving sends bonus_points \"0\", not an empty string", async () => {
     const user = userEvent.setup();
-    const mixedGrid: PointsGrid = {
-      ...GRID,
-      entries: GRID.entries.map((entry) =>
-        entry.id === 3 ? { ...entry, bonus_points: "5.00" } : entry,
-      ),
-    };
+    const nonZeroGrid: PointsGrid = { ...GRID, bonus_points: "5.00" };
     const mock = renderPage({
       "/api/exams/7/points": (_url, init) =>
-        init?.method === "PUT" ? echoPut(init) : jsonResponse(200, mixedGrid),
+        init?.method === "PUT" ? echoPut(init) : jsonResponse(200, nonZeroGrid),
+      "/api/exams/7": (_url, init) =>
+        init?.method === "PATCH"
+          ? jsonResponse(200, { ...EXAM, bonus_points: "0" })
+          : jsonResponse(200, EXAM),
     });
 
-    const bonusField = (await screen.findByTestId("bonus-all")) as HTMLInputElement;
-    // Blank, not silently picking Anna's/Ben's "0.00" or Clara's "5.00".
-    expect(bonusField.value).toBe("");
-    expect(screen.getByTestId("bonus-mixed-hint").textContent).toContain("2");
-
-    // Saving without touching the field must send each row's own, still-distinct value.
-    await user.click(screen.getByTestId("attended-2-present")); // just to enable Save
+    const bonusField = (await screen.findByTestId("bonus-points")) as HTMLInputElement;
+    expect(bonusField.value).toBe("5.00");
+    await user.clear(bonusField);
     await user.click(screen.getByRole("button", { name: "Speichern" }));
 
     await waitFor(() => {
-      const body = putBodyOf(mock);
-      expect(body.entries.find((row) => row.registration_id === 1)?.bonus_points).toBe("0.00");
-      expect(body.entries.find((row) => row.registration_id === 3)?.bonus_points).toBe("5.00");
+      expect(patchCallsTo(mock, "/api/exams/7").length).toBe(1);
     });
-  });
-
-  it("editing the field while mixed clears the hint and applies the new value to every row", async () => {
-    const user = userEvent.setup();
-    const mixedGrid: PointsGrid = {
-      ...GRID,
-      entries: GRID.entries.map((entry) =>
-        entry.id === 3 ? { ...entry, bonus_points: "5.00" } : entry,
-      ),
-    };
-    renderPage({
-      "/api/exams/7/points": (_url, init) =>
-        init?.method === "PUT" ? echoPut(init) : jsonResponse(200, mixedGrid),
-    });
-
-    const bonusField = (await screen.findByTestId("bonus-all")) as HTMLInputElement;
-    expect(screen.getByTestId("bonus-mixed-hint")).not.toBeNull();
-
-    await user.type(bonusField, "1");
-
-    expect(screen.queryByTestId("bonus-mixed-hint")).toBeNull();
-    expect(bonusField.value).toBe("1");
+    const [, init] = patchCallsTo(mock, "/api/exams/7")[0] ?? [];
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    // Never "" — the decimal-string contract rejects an empty string outright (a 422).
+    expect(body).toEqual({ bonus_points: "0" });
   });
 });
 
@@ -752,9 +743,9 @@ describe("PointsEntryPage — select-on-focus", () => {
     expect(cell.selectionEnd).toBe(cell.value.length);
   });
 
-  it("selects the shared bonus field's full contents on focus", async () => {
+  it("selects the bonus_points field's full contents on focus", async () => {
     renderPage();
-    const bonusField = (await screen.findByTestId("bonus-all")) as HTMLInputElement;
+    const bonusField = (await screen.findByTestId("bonus-points")) as HTMLInputElement;
     bonusField.focus();
 
     expect(bonusField.selectionStart).toBe(0);

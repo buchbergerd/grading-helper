@@ -420,6 +420,7 @@ def _classify(
     thresholds: Mapping[str, Decimal] | None,
     max_points: Decimal,
     bonus_mode: BonusMode,
+    bonus_points: Decimal,
 ) -> _Outcome:
     """Classify one non-excluded registration (see :class:`_Outcome`).
 
@@ -459,7 +460,7 @@ def _classify(
         ]
         result = compute_grade(
             exercise_points=entered_in_order,
-            bonus_points=registration.bonus_points,
+            bonus_points=bonus_points,
             attended=True,
             bonus_mode=bonus_mode,
             thresholds=thresholds,
@@ -729,7 +730,9 @@ def build_exam_statistics(
     excluded_count = sum(1 for registration in all_registrations if registration.excluded)
 
     outcomes = [
-        _classify(registration, exercise_ids, thresholds, max_points, exam.bonus_mode)
+        _classify(
+            registration, exercise_ids, thresholds, max_points, exam.bonus_mode, exam.bonus_points
+        )
         for registration in registrations
     ]
 

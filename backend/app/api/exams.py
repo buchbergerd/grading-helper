@@ -55,6 +55,7 @@ UNKNOWN_OWNER_DETAIL = "Der angegebene Besitzer existiert nicht oder ist deaktiv
 OWNER_REQUIRED_DETAIL = "Die Prüfung muss einen Besitzer haben."
 SEMESTER_REQUIRED_DETAIL = "Das Semester darf nicht leer sein."
 TERMIN_REQUIRED_DETAIL = "Der Termin darf nicht leer sein."
+BONUS_POINTS_NEGATIVE_DETAIL = "Die Bonuspunkte dürfen nicht negativ sein."
 
 
 def _raise_validation_errors(errors: list[str]) -> None:
@@ -124,6 +125,7 @@ def exam_summary(exam: Exam) -> ExamSummary:
         termin=exam.termin,
         exam_date=exam.exam_date,
         bonus_mode=exam.bonus_mode,
+        bonus_points=exam.bonus_points,
         owner_id=exam.owner_id,
     )
 
@@ -398,6 +400,9 @@ def create_exam(
     :func:`most_recent_prior_exam` when the field is **absent** from the request body (§4) — a
     one-time copy at creation time; nothing stays linked afterwards. An explicitly sent value,
     including an empty list, wins over the copy: "no exercises yet" must be expressible.
+    ``bonus_points`` is **not** copied forward — it is this exam's own entered result, not
+    reusable configuration (§4), so an absent value always starts at 0 regardless of any prior
+    exam.
 
     The new exam's owner is the lecture's owner (i.e. the caller) and is editable afterwards via
     ``PATCH`` (§4).
@@ -409,6 +414,8 @@ def create_exam(
         _raise_validation_errors([SEMESTER_REQUIRED_DETAIL])
     if not payload.termin.strip():
         _raise_validation_errors([TERMIN_REQUIRED_DETAIL])
+    if payload.bonus_points is not None and payload.bonus_points < 0:
+        _raise_validation_errors([BONUS_POINTS_NEGATIVE_DETAIL])
 
     source = (
         None
@@ -456,6 +463,7 @@ def create_exam(
         termin=payload.termin.strip(),
         exam_date=payload.exam_date,
         bonus_mode=bonus_mode,
+        bonus_points=payload.bonus_points if payload.bonus_points is not None else Decimal(0),
     )
     db.add(exam)
     db.flush()
@@ -478,23 +486,27 @@ def update_exam(
 ) -> ExamDetail:
     """Update an exam. ``exercises``/``grading_schema`` are a **full replace**, never a merge.
 
-    When such a replace happens while the exam already has registrations, the response carries a
-    ``recomputation_warning`` — §8.1 forbids grade thresholds shifting silently under data an
-    instructor may already have transcribed onto paper exams. ``grades_changed`` on that warning
-    is a snapshot-diff: every non-excluded registration's computed grade string is taken *before*
-    the mutation and again *after* it (via ``app.api.points.grade_snapshot``, function-local
-    import — see the comment below on why), and the two are compared per registration. This is
-    deliberately stricter than ``affected_registrations`` (:func:`count_affected_registrations`):
-    a schema edit that leaves every 0.5-point threshold exactly where it was must report ``0``
-    changed grades even though registrations carry data, so the warning does not fire on every
-    edit regardless of effect.
+    When such a replace happens (or ``bonus_points`` actually changes) while the exam already has
+    registrations, the response carries a ``recomputation_warning`` — §8.1 forbids grade
+    thresholds shifting silently under data an instructor may already have transcribed onto paper
+    exams. Since ``bonus_points`` (§7.3) is now one amount for the whole exam rather than a
+    per-student field, editing it can move every non-excluded student's grade in a single edit —
+    exactly the silent-shift risk this gate exists to catch. ``grades_changed`` on that warning is
+    a snapshot-diff: every non-excluded registration's computed grade string is taken *before* the
+    mutation and again *after* it (via ``app.api.points.grade_snapshot``, function-local import —
+    see the comment below on why), and the two are compared per registration. This is deliberately
+    stricter than ``affected_registrations`` (:func:`count_affected_registrations`): a schema (or
+    bonus_points) edit that leaves every grade exactly where it was must report ``0`` changed
+    grades even though registrations carry data, so the warning does not fire on every edit
+    regardless of effect.
 
     One sharp edge, not exercised by any test because the contract never asks for it:
-    ``bonus_mode`` is applied above, before the "before" snapshot is taken. A request that changes
-    ``bonus_mode`` *and* ``grading_schema``/``exercises`` in the same ``PATCH`` therefore snapshots
-    "before" under the *new* bonus_mode already, so ``grades_changed`` only reflects the
-    threshold/exercise move, not the bonus_mode change layered on top of it. This matches the
-    contract, which scopes the warning to an ``exercises``/``grading_schema`` replace — a
+    ``bonus_mode`` is applied above, before the "before" snapshot is taken (unlike
+    ``bonus_points``, which is applied *after* it — see below). A request that changes
+    ``bonus_mode`` *and* ``grading_schema``/``exercises``/``bonus_points`` in the same ``PATCH``
+    therefore snapshots "before" under the *new* bonus_mode already, so ``grades_changed`` only
+    reflects the other moves, not the bonus_mode change layered on top of it. This matches the
+    contract, which scopes the warning to exercises/grading_schema/bonus_points — a
     bonus_mode-only edit never triggers it at all — but is worth knowing if this ever needs
     tightening.
     """
@@ -508,6 +520,8 @@ def update_exam(
         errors.append(TERMIN_REQUIRED_DETAIL)
     if "owner_id" in sent and payload.owner_id is None:
         errors.append(OWNER_REQUIRED_DETAIL)
+    if payload.bonus_points is not None and payload.bonus_points < 0:
+        errors.append(BONUS_POINTS_NEGATIVE_DETAIL)
 
     exercises = list(payload.exercises or []) if "exercises" in sent else None
     if exercises is not None:
@@ -533,7 +547,13 @@ def update_exam(
     if payload.bonus_mode is not None:
         exam.bonus_mode = payload.bonus_mode
 
-    thresholds_moved = exercises is not None or percentages is not None
+    # Compared against the *old* value before bonus_points is actually written below, so the
+    # before/after grade snapshot brackets this change like an exercises/grading_schema replace
+    # rather than missing it the way the bonus_mode sharp edge (above) does.
+    bonus_points_changed = (
+        payload.bonus_points is not None and payload.bonus_points != exam.bonus_points
+    )
+    thresholds_moved = exercises is not None or percentages is not None or bonus_points_changed
     has_registrations = count_registrations(db, exam) > 0
 
     # §8.1: snapshot every non-excluded registration's *computed* grade string before the
@@ -551,6 +571,13 @@ def update_exam(
         _replace_exercises(db, exam, exercises)
     if percentages is not None:
         _replace_grading_schema(db, exam, percentages)
+    if payload.bonus_points is not None:
+        exam.bonus_points = payload.bonus_points
+        # The session has autoflush disabled (app/db.py), and the "after" snapshot below calls
+        # db.expire_all() — which, with nothing flushed yet, would discard this assignment and
+        # make the "after" grade snapshot silently re-read the *old* bonus_points from the
+        # database. Flushing here is what makes it stick before that expire.
+        db.flush()
 
     warning: RecomputationWarning | None = None
     if thresholds_moved and has_registrations:

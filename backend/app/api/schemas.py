@@ -253,6 +253,9 @@ class ExamSummary(BaseModel):
     termin: str
     exam_date: date | None
     bonus_mode: BonusMode
+    #: One amount for the whole exam (§7.3), applied identically to every non-excluded student —
+    #: not per student.
+    bonus_points: DecimalString
     owner_id: int
 
 
@@ -299,12 +302,15 @@ class ExamCreateRequest(BaseModel):
     ``bonus_mode``, ``exercises`` and ``grading_schema`` are copied forward from the lecture's
     most recent prior exam when **absent** (§4). "Absent" is decided via ``model_fields_set``,
     so an explicitly sent ``[]`` (or ``null``) means "start empty" and suppresses the copy.
+    ``bonus_points`` is deliberately **not** part of that copy-forward list: it's this exam's own
+    entered result, not reusable configuration, so an absent value always starts at 0.
     """
 
     semester: str
     termin: str
     exam_date: date | None = None
     bonus_mode: BonusMode | None = None
+    bonus_points: DecimalString | None = None
     exercises: list[ExerciseInput] | None = None
     grading_schema: list[GradeThresholdInput] | None = None
 
@@ -314,13 +320,16 @@ class ExamUpdateRequest(BaseModel):
 
     Present ``exercises``/``grading_schema`` **replace** the whole collection, never merge.
     ``exam_date`` is the one field for which an explicit ``null`` is meaningful (clear the
-    date), so presence is again decided via ``model_fields_set``.
+    date), so presence is again decided via ``model_fields_set``. Editing ``bonus_points`` after
+    points have already been entered can shift every non-excluded student's grade in one edit
+    (§8.1) — see ``app/api/exams.py::update_exam`` for the recomputation-warning handling.
     """
 
     semester: str | None = None
     termin: str | None = None
     exam_date: date | None = None
     bonus_mode: BonusMode | None = None
+    bonus_points: DecimalString | None = None
     owner_id: int | None = None
     exercises: list[ExerciseInput] | None = None
     grading_schema: list[GradeThresholdInput] | None = None
@@ -354,7 +363,6 @@ class RegistrationOut(BaseModel):
     flagged: bool
     excluded: bool
     attended: bool | None
-    bonus_points: DecimalString
     source_filename: str | None
 
 
@@ -401,7 +409,6 @@ class RegistrationUpdateRequest(BaseModel):
     flagged: bool | None = None
     excluded: bool | None = None
     attended: bool | None = None
-    bonus_points: DecimalString | None = None
 
 
 class ImportedFileSummary(BaseModel):
@@ -479,7 +486,6 @@ class PointsEntryOut(BaseModel):
     course_code: str
     versuch: int
     attended: bool | None
-    bonus_points: DecimalString
     points: dict[str, DecimalString]
     raw_total: DecimalString
     final_total: DecimalString | None
@@ -494,6 +500,8 @@ class PointsGridOut(BaseModel):
     exercises: list[ExerciseOut]
     grading_schema: list[GradeThresholdOut]
     bonus_mode: BonusMode
+    #: One amount for the whole exam (§7.3), applied identically to every row below.
+    bonus_points: DecimalString
     #: ``False`` when the grading schema is absent or incomplete (fewer than the ten §7.1
     #: grades). Every entry's ``grade``/``status`` are then ``null`` rather than the route
     #: raising — ``compute_grade`` requires a complete schema and would otherwise ``500``.
@@ -506,13 +514,13 @@ class PointsSaveRequest(BaseModel):
 
     Every field is independently defaulted rather than "unchanged if omitted" (unlike the
     ``PATCH`` requests elsewhere in this module): an absent/``null`` ``points`` entry **deletes**
-    that exercise's ``ExercisePoints`` row, an absent ``attended`` sets it to ``null`` ("not yet
-    recorded"), and an absent ``bonus_points`` sets it to ``Decimal(0)``. See the route docstring
-    for the full semantics, in particular that ``attended = false`` does **not** clear ``points``.
+    that exercise's ``ExercisePoints`` row, and an absent ``attended`` sets it to ``null`` ("not
+    yet recorded"). See the route docstring for the full semantics, in particular that
+    ``attended = false`` does **not** clear ``points``. There is no ``bonus_points`` here — it is
+    an exam-wide amount edited via ``PATCH /api/exams/{id}`` (§7.3), not part of a per-row save.
     """
 
     attended: bool | None = None
-    bonus_points: DecimalString | None = None
     #: Keyed by exercise id as a string. A key with a ``null`` value, or a key absent entirely,
     #: both delete that exercise's row — there is no distinct "leave unchanged" state in a PUT.
     points: dict[str, DecimalString | None] = Field(default_factory=dict)

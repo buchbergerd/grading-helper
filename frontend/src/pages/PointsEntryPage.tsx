@@ -54,7 +54,6 @@ interface EditableRow {
   versuch: number;
   /** `null` = not yet recorded, distinct from `false` — §7.4/§8.1. */
   attended: boolean | null;
-  bonusPointsText: string;
   pointsText: Record<string, string>;
 }
 
@@ -73,7 +72,6 @@ function toEditableRow(entry: PointsEntry, exercises: readonly PointsExercise[])
     courseCode: entry.course_code,
     versuch: entry.versuch,
     attended: entry.attended,
-    bonusPointsText: entry.bonus_points,
     pointsText,
   };
 }
@@ -137,51 +135,12 @@ function buildSavePayload(
       // typed "0" is canonicalised and sent as "0" like any other value.
       points[key] = text.trim() === "" ? null : (parseDecimalInput(text) ?? text);
     }
-    // Same empty/zero rule as points, but with `null` rather than a fabricated "0": the wire
-    // contract treats an omitted/`null` bonus_points as "use the server's default of 0", so an
-    // emptied field asks for exactly that default rather than sending the empty string, which
-    // the decimal-string contract rejects outright (a request-wide 422, losing every row's
-    // edits in this bulk save, not just this one field).
-    const bonusText = row.bonusPointsText.trim();
     return {
       registration_id: row.registrationId,
       attended: row.attended,
-      bonus_points: bonusText === "" ? null : (parseDecimalInput(bonusText) ?? bonusText),
       points,
     };
   });
-}
-
-/**
- * Derives the single, exam-wide bonus field's display state from every row currently held in
- * state. `bonus_points` itself stays per-registration in the database and on the wire (§7.3) —
- * this only decides what the *one* input above the grid should show.
- *
- * All rows sharing one value -> show it. Different values across rows (possible from earlier
- * per-row entry, or a copy-forward) -> show the field blank rather than silently picking one of
- * them, so the mixed state is visible instead of an instructor unknowingly overwriting data the
- * moment they touch the field.
- *
- * Grouped by **decimal value** via `compareDecimalStrings`, not by raw string equality: an
- * untouched row's `bonus_points` can come back from the server as `"0"` while an explicitly
- * entered zero comes back as `"0.00"` (same value, different canonical text some servers may
- * emit) — comparing strings would misreport that as "mixed" even though every student's bonus is
- * actually zero.
- */
-function computeBonusField(rows: readonly EditableRow[]): {
-  text: string;
-  mixedCount: number | null;
-} {
-  if (rows.length === 0) return { text: "", mixedCount: null };
-  const representatives: string[] = [];
-  for (const row of rows) {
-    const alreadySeen = representatives.some(
-      (value) => compareDecimalStrings(value, row.bonusPointsText) === 0,
-    );
-    if (!alreadySeen) representatives.push(row.bonusPointsText);
-  }
-  if (representatives.length === 1) return { text: representatives[0] ?? "", mixedCount: null };
-  return { text: "", mixedCount: representatives.length };
 }
 
 export default function PointsEntryPage(): JSX.Element {
@@ -207,17 +166,14 @@ export default function PointsEntryPage(): JSX.Element {
 
   const [courseFilter, setCourseFilter] = useState("");
 
-  // The shared "for the whole exam" bonus field (see `computeBonusField`) and the bulk
-  // "alle als anwesend markieren" confirmation dialog's open/closed state.
-  const [bonusFieldText, setBonusFieldText] = useState("");
-  const [bonusMixedCount, setBonusMixedCount] = useState<number | null>(null);
   const [showBulkAttendDialog, setShowBulkAttendDialog] = useState(false);
 
-  // The exam-wide bonus *mode* (§7.3) — moved here from ExamDetailPage since it governs how the
-  // bonus points entered on this page are applied. Edited via radios like the exercise/attendance
-  // grid above it, and committed by the same "Speichern" button (see `onSave`) rather than its
-  // own save action, so it participates in the same dirty/unsaved-changes tracking as everything
-  // else on this page.
+  // The exam's bonus_points (§7.3: one amount for the whole exam, not per student) and bonus_mode
+  // — both moved here from ExamDetailPage since they govern how every row's grade preview below
+  // is computed. Edited via the fieldset above the grid, and committed by the same "Speichern"
+  // button (see `onSave`) rather than their own save action, so they participate in the same
+  // dirty/unsaved-changes tracking as everything else on this page.
+  const [bonusPointsText, setBonusPointsText] = useState("");
   const [bonusMode, setBonusModeState] = useState<BonusMode>("ALWAYS");
 
   const [completeness, setCompleteness] = useState<CompletenessResult | null>(null);
@@ -250,11 +206,9 @@ export default function PointsEntryPage(): JSX.Element {
       setExamMessages([]);
       setGrid(pointsGrid);
       setBonusModeState(pointsGrid.bonus_mode);
+      setBonusPointsText(pointsGrid.bonus_points);
       const mappedRows = pointsGrid.entries.map((entry) => toEditableRow(entry, pointsGrid.exercises));
       setRows(mappedRows);
-      const bonusField = computeBonusField(mappedRows);
-      setBonusFieldText(bonusField.text);
-      setBonusMixedCount(bonusField.mixedCount);
       setGridMessages([]);
       setDirty(false);
       setSaveWarnings([]);
@@ -312,17 +266,8 @@ export default function PointsEntryPage(): JSX.Element {
     setSaveWarnings([]);
   }
 
-  /** The single, exam-wide bonus field's edit handler: fans the typed text out to *every* row's
-   * `bonusPointsText` — including rows hidden by the current course filter, same "state holds
-   * every row" convention as `buildSavePayload` — and clears the mixed-value hint, since after
-   * this edit every row shares one value by construction. Fanning out on every keystroke (rather
-   * than on blur) keeps what's on screen always matching what a save would send; `bonus_points`
-   * itself stays per-registration in the database and on the wire (§7.3), this is presentation
-   * only. */
-  function updateBonusAll(text: string): void {
-    setBonusFieldText(text);
-    setBonusMixedCount(null);
-    setRows((prev) => prev.map((row) => ({ ...row, bonusPointsText: text })));
+  function updateBonusPoints(text: string): void {
+    setBonusPointsText(text);
     setDirty(true);
     setSavedNotice(false);
     setSaveWarnings([]);
@@ -446,24 +391,34 @@ export default function PointsEntryPage(): JSX.Element {
     setSavedNotice(false);
     try {
       const payload = buildSavePayload(rows, grid.exercises);
-      // The bonus mode is a separate resource (the exam, not the points grid) on the wire, so a
-      // changed mode needs its own PATCH alongside the points PUT — but both are committed
-      // together here since this button is this page's one "Speichern" action.
+      // bonus_mode and bonus_points are both fields of the exam (not the points grid) on the
+      // wire, so a changed one needs its own PATCH alongside the points PUT — but both are
+      // committed together here since this button is this page's one "Speichern" action.
       const bonusModeChanged = bonusMode !== grid.bonus_mode;
-      const [saved] = await Promise.all([
+      const parsedBonusPoints =
+        bonusPointsText.trim() === "" ? "0" : (parseDecimalInput(bonusPointsText) ?? bonusPointsText);
+      const bonusPointsChanged = compareDecimalStrings(parsedBonusPoints, grid.bonus_points) !== 0;
+      const examBody: Parameters<typeof updateExam>[1] = {};
+      if (bonusModeChanged) examBody.bonus_mode = bonusMode;
+      if (bonusPointsChanged) examBody.bonus_points = parsedBonusPoints;
+      const examChanged = bonusModeChanged || bonusPointsChanged;
+      const [saved, updatedExam] = await Promise.all([
         savePointsGrid(examId, payload),
-        bonusModeChanged ? updateExam(examId, { bonus_mode: bonusMode }) : Promise.resolve(null),
+        examChanged ? updateExam(examId, examBody) : Promise.resolve(null),
       ]);
       // Re-seed from the server's recomputed rows rather than merging only the grade back in —
       // the server is authoritative (§8) for canonicalised values (e.g. a percentage-typed
       // "3," the instructor never finished) too, not just for the grade.
       const mappedRows = saved.entries.map((entry) => toEditableRow(entry, grid.exercises));
       setRows(mappedRows);
-      const bonusField = computeBonusField(mappedRows);
-      setBonusFieldText(bonusField.text);
-      setBonusMixedCount(bonusField.mixedCount);
-      if (bonusModeChanged) {
-        setGrid((prev) => (prev === null ? prev : { ...prev, bonus_mode: bonusMode }));
+      if (updatedExam !== null) {
+        setBonusModeState(updatedExam.bonus_mode);
+        setBonusPointsText(updatedExam.bonus_points);
+        setGrid((prev) =>
+          prev === null
+            ? prev
+            : { ...prev, bonus_mode: updatedExam.bonus_mode, bonus_points: updatedExam.bonus_points },
+        );
       }
       setDirty(false);
       setSavedNotice(true);
@@ -479,6 +434,10 @@ export default function PointsEntryPage(): JSX.Element {
   }
 
   /* ---------------------------------------------------------------------------- derived data */
+
+  // Same fallback the save path uses for an empty/unparsable bonus field (§7.3: one shared
+  // value for every row's live grade preview below, not per row).
+  const previewBonusPoints = parseDecimalInput(bonusPointsText) ?? "0.00";
 
   const courseCodes = useMemo(
     () => Array.from(new Set(rows.map((row) => row.courseCode))).sort(),
@@ -672,28 +631,20 @@ export default function PointsEntryPage(): JSX.Element {
           </div>
         ))}
         <div className="field">
-          <label htmlFor="bonus-all">Bonuspunkte (für alle Studierenden)</label>
+          <label htmlFor="bonus-points">Bonuspunkte (für die gesamte Prüfung)</label>
           <input
-            id="bonus-all"
+            id="bonus-points"
             type="text"
             inputMode="decimal"
             className="narrow"
-            data-testid="bonus-all"
-            value={bonusFieldText}
-            placeholder={bonusMixedCount !== null ? "uneinheitlich" : undefined}
-            onChange={(event) => updateBonusAll(event.target.value)}
+            data-testid="bonus-points"
+            value={bonusPointsText}
+            onChange={(event) => updateBonusPoints(event.target.value)}
             onFocus={onSelectableFocus}
             onMouseDown={onSelectableMouseDown}
             onMouseUp={onSelectableMouseUp}
           />
         </div>
-        {bonusMixedCount !== null ? (
-          <p className="muted small" data-testid="bonus-mixed-hint">
-            Aktuell sind {bonusMixedCount} unterschiedliche Bonuspunkte-Werte hinterlegt (z. B.
-            durch frühere Eingaben oder eine übernommene Klausur) — das Feld bleibt deshalb leer.
-            Eine Eingabe hier setzt den Wert für <strong>alle</strong> Studierenden.
-          </p>
-        ) : null}
       </fieldset>
 
       <div data-testid="grid-errors">
@@ -770,7 +721,7 @@ export default function PointsEntryPage(): JSX.Element {
               {visibleRows.map((row, rowIndex) => {
                 const preview = computeGradePreview({
                   enteredExercisePoints: enteredPoints(row, grid.exercises),
-                  bonusPoints: parseDecimalInput(row.bonusPointsText) ?? "0.00",
+                  bonusPoints: previewBonusPoints,
                   bonusMode,
                   attended: row.attended,
                   gradingSchema: grid.grading_schema,

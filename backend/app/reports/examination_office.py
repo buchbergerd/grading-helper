@@ -131,6 +131,7 @@ def build_examination_office_data(exam: Exam) -> ExaminationOfficeData:
                     thresholds=thresholds,
                     max_points=max_points,
                     bonus_mode=exam.bonus_mode,
+                    bonus_points=exam.bonus_points,
                 ),
             )
             for registration in registrations

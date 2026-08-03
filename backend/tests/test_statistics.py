@@ -61,6 +61,7 @@ def _make_exam(
     exercises: list[tuple[str, Decimal]] | None = None,
     grading_schema: dict[str, Decimal] | None = None,
     bonus_mode: BonusMode = BonusMode.ALWAYS,
+    bonus_points: Decimal = Decimal(0),
 ) -> Exam:
     """A committed Exam with the given exercises and (optional) full grading schema."""
     lecture = Lecture(name="Beispielvorlesung", owner_id=owner.id)
@@ -73,6 +74,7 @@ def _make_exam(
         termin="1. Termin",
         exam_date=date(2024, 2, 12),
         bonus_mode=bonus_mode,
+        bonus_points=bonus_points,
     )
     for position, (name, max_points) in enumerate(exercises or [], start=1):
         exam.exercises.append(Exercise(name=name, max_points=max_points, position=position))
@@ -92,7 +94,6 @@ def _registration(
     course_code: str = "B.Sc. Beispiel",
     versuch: int = 1,
     attended: bool | None,
-    bonus_points: Decimal = Decimal(0),
     points: dict[int, Decimal] | None = None,
     excluded: bool = False,
 ) -> StudentRegistration:
@@ -105,7 +106,6 @@ def _registration(
         module_title=f"Beispielvorlesung ({course_code})",
         versuch=versuch,
         attended=attended,
-        bonus_points=bonus_points,
         excluded=excluded,
     )
     for exercise_id, value in (points or {}).items():
@@ -137,31 +137,40 @@ def _assert_no_float(value: object, path: str = "$") -> None:
 
 
 def test_worked_example_always_bonus(session: Session, instructor_user: User) -> None:
-    """Rows 1-4 of §7.5's table, ``bonus_mode=ALWAYS``."""
+    """Rows 1-4 of §7.5's table, ``bonus_mode=ALWAYS``.
+
+    §7.3: ``bonus_points`` is now one amount for the whole exam, so it can no longer be 0 for
+    some rows and 3 for another within a single exam the way the table's raw ``bonus_points``
+    column suggests. This exam carries the shared amount (3) that row 4 needs; rows 1-2's
+    ``Aufgabe 1`` points are shifted down by exactly that amount (27.0/26.5 instead of the
+    table's 30.0/29.5) so that adding the same +3 back reproduces the table's ``final_total`` —
+    and therefore the exact same grade outcome — for every row. Row 3 is unaffected (§7.4:
+    ``attended=false`` ignores points and bonus alike), and row 4 keeps its literal 28.0.
+    """
     exam = _make_exam(
         session,
         instructor_user,
         exercises=[("Aufgabe 1", Decimal(60))],
         grading_schema=WORKED_EXAMPLE_SCHEMA,
         bonus_mode=BonusMode.ALWAYS,
+        bonus_points=Decimal(3),
     )
     exercise_id = exam.exercises[0].id
     _add(
         session,
         exam,
         _registration(
-            matrikelnummer="1", attended=True, points={exercise_id: Decimal("30.0")}
-        ),  # -> 4.0
+            matrikelnummer="1", attended=True, points={exercise_id: Decimal("27.0")}
+        ),  # -> final 30.0 -> 4.0
         _registration(
-            matrikelnummer="2", attended=True, points={exercise_id: Decimal("29.5")}
-        ),  # -> nicht bestanden
+            matrikelnummer="2", attended=True, points={exercise_id: Decimal("26.5")}
+        ),  # -> final 29.5 -> nicht bestanden
         _registration(
             matrikelnummer="3", attended=False, points={exercise_id: Decimal("29.5")}
         ),  # -> n.e., attendance overrides points
         _registration(
             matrikelnummer="4",
             attended=True,
-            bonus_points=Decimal(3),
             points={exercise_id: Decimal("28.0")},
         ),  # -> final 31.0 -> 4.0
     )
@@ -202,7 +211,9 @@ def test_worked_example_only_if_passing_without_bonus(
     """Rows 5-6 of §7.5's table, ``bonus_mode=ONLY_IF_PASSING_WITHOUT_BONUS``.
 
     A different exam from :func:`test_worked_example_always_bonus`: ``bonus_mode`` is a per-exam
-    setting, so the two modes cannot be exercised on one exam's registrations.
+    setting, so the two modes cannot be exercised on one exam's registrations. Both table rows
+    already share the same ``bonus_points`` (3), so — unlike that other test — no adjustment is
+    needed to express them as one exam-wide amount (§7.3).
     """
     exam = _make_exam(
         session,
@@ -210,6 +221,7 @@ def test_worked_example_only_if_passing_without_bonus(
         exercises=[("Aufgabe 1", Decimal(60))],
         grading_schema=WORKED_EXAMPLE_SCHEMA,
         bonus_mode=BonusMode.ONLY_IF_PASSING_WITHOUT_BONUS,
+        bonus_points=Decimal(3),
     )
     exercise_id = exam.exercises[0].id
     _add(
@@ -218,13 +230,11 @@ def test_worked_example_only_if_passing_without_bonus(
         _registration(
             matrikelnummer="5",
             attended=True,
-            bonus_points=Decimal(3),
             points={exercise_id: Decimal("28.0")},
         ),  # raw 28.0 < 30.0 -> bonus withheld -> nicht bestanden
         _registration(
             matrikelnummer="6",
             attended=True,
-            bonus_points=Decimal(3),
             points={exercise_id: Decimal("32.0")},
         ),  # raw 32.0 >= 30.0 -> bonus applied -> final 35.0 -> 3.7
     )
@@ -253,6 +263,7 @@ def test_uncapped_bonus_extends_histogram_range_and_bins_the_student(
         exercises=[("Aufgabe 1", Decimal(10))],
         grading_schema=WORKED_EXAMPLE_SCHEMA,
         bonus_mode=BonusMode.ALWAYS,
+        bonus_points=Decimal(5),
     )
     exercise_id = exam.exercises[0].id
     _add(
@@ -261,7 +272,6 @@ def test_uncapped_bonus_extends_histogram_range_and_bins_the_student(
         _registration(
             matrikelnummer="1",
             attended=True,
-            bonus_points=Decimal(5),
             points={exercise_id: Decimal("10")},
         ),
     )
@@ -687,6 +697,7 @@ def test_payload_contains_no_float_anywhere(session: Session, instructor_user: U
         instructor_user,
         exercises=[("Aufgabe 1", Decimal(60)), ("Aufgabe 2", Decimal(40))],
         grading_schema=WORKED_EXAMPLE_SCHEMA,
+        bonus_points=Decimal(3),
     )
     exercise_1_id, exercise_2_id = exam.exercises[0].id, exam.exercises[1].id
     _add(
@@ -695,12 +706,9 @@ def test_payload_contains_no_float_anywhere(session: Session, instructor_user: U
         _registration(
             matrikelnummer="1",
             attended=True,
-            bonus_points=Decimal(3),
             points={exercise_1_id: Decimal("57.0"), exercise_2_id: Decimal("0.75")},
         ),
-        _registration(
-            matrikelnummer="2", attended=True, points={exercise_1_id: Decimal("29.5")}
-        ),
+        _registration(matrikelnummer="2", attended=True, points={exercise_1_id: Decimal("29.5")}),
         _registration(matrikelnummer="3", attended=False),
         _registration(matrikelnummer="4", attended=None),
     )

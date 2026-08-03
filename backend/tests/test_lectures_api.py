@@ -171,6 +171,7 @@ def test_lecture_detail_lists_its_exams_newest_first(instructor_client: TestClie
         "termin",
         "exam_date",
         "bonus_mode",
+        "bonus_points",
         "owner_id",
     }
     assert body["exams"][0]["lecture_name"] == "Grundlagen der Informationstechnik"

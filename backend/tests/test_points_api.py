@@ -160,11 +160,14 @@ def test_worked_example_7_5_through_the_http_api(
 ) -> None:
     """§7.5's six rows, saved via ``PUT`` and read back via the same route's response.
 
-    Rows 1-4 run under ``bonus_mode = ALWAYS`` (the exam's default at creation); rows 5-6 need
-    ``ONLY_IF_PASSING_WITHOUT_BONUS`` for the same raw/bonus values to mean something different,
-    so the exam's ``bonus_mode`` is flipped via ``PATCH`` in between. That ``PATCH`` touches
-    neither ``exercises`` nor ``grading_schema``, so it must not fire a §8.1 recomputation
-    warning and must not disturb any already-saved row.
+    ``bonus_points`` is now one amount for the whole exam (§7.3), so — unlike the per-row
+    ``bonus_mode`` switch further down — patching it necessarily affects every already-saved row
+    at once, not just the rows introduced after it. Rows 1-4 run under ``bonus_mode = ALWAYS``
+    (the exam's default at creation): rows 1-3 while ``bonus_points`` is still 0, row 4 after
+    it's patched to 3. Rows 5-6 need ``ONLY_IF_PASSING_WITHOUT_BONUS`` for the same raw values to
+    mean something different, so the exam's ``bonus_mode`` is flipped via a second ``PATCH`` in
+    between — that one touches neither ``exercises``/``grading_schema`` nor ``bonus_points``, so
+    it must not fire a §8.1 recomputation warning and must not disturb any already-saved row.
     """
     exam = post_exam(
         instructor_client,
@@ -205,62 +208,73 @@ def test_worked_example_7_5_through_the_http_api(
     assert body["final_total"] is None
     assert body["raw_total"] == "29.5"
 
-    # Row 4: 28.0/+3/ALWAYS → bonus applied unconditionally, now clears 30.0.
+    # §8.1: bonus_points is exam-wide, so patching it to 3 (still ALWAYS) recomputes rows 1-2
+    # too, not just the still-unsaved row 4 — final_total 30.0+3=33.0 now meets the 3.7 threshold
+    # (33.0), and 29.5+3=32.5 now clears the 4.0 threshold (30.0). Row 3 ("n.e.") is unaffected
+    # (§7.4), and rows 4-6 have no attended recorded yet, so neither counts as "affected".
+    patched = instructor_client.patch(f"/api/exams/{exam_id}", json={"bonus_points": "3"})
+    assert patched.status_code == 200, patched.text
+    warning = patched.json()["recomputation_warning"]
+    assert warning["changed"] is True
+    assert warning["affected_registrations"] == 3  # rows 1-3 carry attended/points data
+    assert warning["grades_changed"] == 2  # rows 1 and 2 move; row 3 stays "n.e."
+
+    # Row 4: 28.0/attended, ALWAYS, exam-wide bonus 3 → bonus applied unconditionally, clears 30.0.
     body = save_points(
         instructor_client,
         rows[3]["id"],
         attended=True,
-        bonus_points="3",
         points={str(exercise_id): "28.0"},
     ).json()["registration"]
     assert body["raw_total"] == "28.0"
     assert body["final_total"] == "31.0"
     assert body["grade"] == "4.0"
 
-    # Switch bonus_mode for rows 5-6. No exercises/grading_schema touched → no recompute warning.
+    # Switch bonus_mode for rows 5-6. Neither exercises/grading_schema nor bonus_points is
+    # touched here → no recompute warning (the bonus_mode sharp edge, app/api/exams.py).
     patched = instructor_client.patch(
         f"/api/exams/{exam_id}", json={"bonus_mode": "ONLY_IF_PASSING_WITHOUT_BONUS"}
     )
     assert patched.status_code == 200, patched.text
     assert patched.json()["recomputation_warning"] is None
 
-    # Row 5: 28.0/+3/ONLY_IF_PASSING_WITHOUT_BONUS → raw_total 28.0 < 30.0, bonus withheld.
+    # Row 5: 28.0/attended, ONLY_IF_PASSING_WITHOUT_BONUS, exam-wide bonus 3 → raw_total 28.0 <
+    # 30.0, bonus withheld.
     body = save_points(
         instructor_client,
         rows[4]["id"],
         attended=True,
-        bonus_points="3",
         points={str(exercise_id): "28.0"},
     ).json()["registration"]
     assert body["raw_total"] == "28.0"
     assert body["final_total"] == "28.0"
     assert body["grade"] == "nicht bestanden"
 
-    # Row 6: 32.0/+3/ONLY_IF_PASSING_WITHOUT_BONUS → raw_total 32.0 ≥ 30.0, bonus applied.
-    # final_total 35.0 meets the 3.7 threshold (33.0) but not 3.3's (36.0) → exactly "3.7".
+    # Row 6: 32.0/attended, ONLY_IF_PASSING_WITHOUT_BONUS, exam-wide bonus 3 → raw_total 32.0 ≥
+    # 30.0, bonus applied. final_total 35.0 meets the 3.7 threshold (33.0) but not 3.3's (36.0)
+    # → exactly "3.7".
     body = save_points(
         instructor_client,
         rows[5]["id"],
         attended=True,
-        bonus_points="3",
         points={str(exercise_id): "32.0"},
     ).json()["registration"]
     assert body["raw_total"] == "32.0"
     assert body["final_total"] == "35.0"
     assert body["grade"] == "3.7"
 
-    # Row 4's *stored* data (28.0 raw, +3 bonus) is untouched by the later PATCH/saves — but
-    # nothing here is a stored grade (app/models/registration.py has no such column), so the grid
-    # now reports row 4 recomputed under the *current* bonus_mode too: 28.0 < 30.0, so
-    # ONLY_IF_PASSING_WITHOUT_BONUS now withholds its bonus, same as row 5.
+    # Row 4's *stored* data (28.0 raw) is untouched by the later PATCH/saves — but nothing here
+    # is a stored grade (app/models/registration.py has no such column), so the grid now reports
+    # row 4 recomputed under the *current* bonus_mode too: 28.0 < 30.0, so
+    # ONLY_IF_PASSING_WITHOUT_BONUS now withholds the exam's bonus, same as row 5.
     grid = instructor_client.get(f"/api/exams/{exam_id}/points").json()
     assert grid["bonus_mode"] == "ONLY_IF_PASSING_WITHOUT_BONUS"
+    assert grid["bonus_points"] == "3"
     assert grid["grading_configured"] is True
     matrikelnummern = [entry["matrikelnummer"] for entry in grid["entries"]]
     assert matrikelnummern == sorted(matrikelnummern)  # sorted by Matrikelnummer
     row4 = next(e for e in grid["entries"] if e["matrikelnummer"] == "1000004")
     assert row4["points"][str(exercise_id)] == "28.0"
-    assert row4["bonus_points"] == "3"
     assert row4["final_total"] == "28.0"
     assert row4["grade"] == "nicht bestanden"
 
@@ -390,23 +404,20 @@ def test_points_above_max_points_are_saved_with_a_warning(
     assert exercise_points(fresh_session, registration["id"], exercise_id) == Decimal(12)
 
 
-@pytest.mark.parametrize("field", ["points", "bonus_points"])
-def test_negative_values_are_rejected(
-    instructor_client: TestClient, lecture_id: int, field: str
-) -> None:
+def test_negative_points_are_rejected(instructor_client: TestClient, lecture_id: int) -> None:
+    """Negative ``bonus_points`` is an exam-level concern now — see test_exams_api.py."""
     exam = post_exam(
         instructor_client, lecture_id, exercises=[{"name": "Aufgabe 1", "max_points": "60"}]
     )
     exercise_id = exam["exercises"][0]["id"]
     registration = create_registration(instructor_client, exam["id"], "1000001")
 
-    body: dict[str, object] = {"attended": True}
-    if field == "points":
-        body["points"] = {str(exercise_id): "-1"}
-    else:
-        body["bonus_points"] = "-1"
-
-    response = save_points(instructor_client, registration["id"], **body)
+    response = save_points(
+        instructor_client,
+        registration["id"],
+        attended=True,
+        points={str(exercise_id): "-1"},
+    )
 
     assert response.status_code == 422
 
@@ -728,7 +739,6 @@ def test_bulk_save_writes_every_row_in_one_call(
                 {
                     "registration_id": reg_b["id"],
                     "attended": True,
-                    "bonus_points": "1.5",
                     "points": {str(exercise_id): "20"},
                 },
             ]

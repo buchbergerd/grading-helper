@@ -73,6 +73,8 @@ export interface ExamSummary {
   /** "YYYY-MM-DD" or null on the wire; German DD.MM.YYYY is applied in the UI only. */
   exam_date: string | null;
   bonus_mode: BonusMode;
+  /** DECIMAL — one amount for the whole exam (§7.3), applied to every non-excluded student. */
+  bonus_points: string;
   owner_id: number;
 }
 
@@ -88,6 +90,8 @@ export interface ExamWriteBody {
   termin?: string;
   exam_date?: string | null;
   bonus_mode?: BonusMode;
+  /** DECIMAL — one amount for the whole exam (§7.3). Not copied forward on create (§4). */
+  bonus_points?: string;
   exercises?: Exercise[];
   grading_schema?: GradingSchemaRow[];
   owner_id?: number;
@@ -415,8 +419,6 @@ export interface RegistrationOut {
   flagged: boolean;
   excluded: boolean;
   attended: boolean | null;
-  /** DECIMAL — string on purpose, see the file header. Not edited in this milestone. */
-  bonus_points: string;
   source_filename: string | null;
 }
 
@@ -436,9 +438,7 @@ export interface RegistrationCreateBody {
 /**
  * Body for `PATCH /api/registrations/{id}`. Every field is optional and, per the contract,
  * only the fields actually present are changed server-side (`model_fields_set`) — so callers
- * must omit a field rather than send an empty string/false for "leave unchanged". `bonus_points`
- * is typed `string` and must never be computed from a JS number (§7.0); it is not surfaced in
- * this milestone's UI, but the type still forbids a `number` at the call site.
+ * must omit a field rather than send an empty string/false for "leave unchanged".
  */
 export interface RegistrationUpdateBody {
   matrikelnummer?: string;
@@ -451,7 +451,6 @@ export interface RegistrationUpdateBody {
   flagged?: boolean;
   excluded?: boolean;
   attended?: boolean | null;
-  bonus_points?: string;
 }
 
 export interface ImportedFileSummary {
@@ -618,8 +617,6 @@ export interface PointsEntry {
   versuch: number;
   /** `null` = not yet recorded, distinct from `false` ("nicht erschienen") — §7.4/§8.1. */
   attended: boolean | null;
-  /** DECIMAL — string. */
-  bonus_points: string;
   /** Keyed by exercise id (as a string, since it crosses the wire as a JSON object key). */
   points: Record<string, string>;
   /** DECIMAL — string. Sum of entered exercise points. */
@@ -640,6 +637,8 @@ export interface PointsGrid {
   exercises: PointsExercise[];
   grading_schema: PointsSchemaRow[];
   bonus_mode: BonusMode;
+  /** DECIMAL — one amount for the whole exam (§7.3), applied to every row below. */
+  bonus_points: string;
   /** False when the exam has no (complete) grading schema yet — a grade preview is then not
    * meaningful and must not be shown as if it were. */
   grading_configured: boolean;
@@ -661,14 +660,12 @@ export function getPointsGrid(examId: number): Promise<PointsGrid> {
  * `points[exerciseId]` is the DECIMAL string to store, or `null` to mean "not entered" — **never
  * `"0"` for an empty cell** (§8.1's central distinction); a key can also be omitted for the same
  * "not entered" effect (the PUT is a full replace, not a merge), but this client always sends
- * every exercise id it knows about explicitly. `bonus_points: null` (as opposed to an empty
- * string, which the decimal-string contract rejects outright) is how an emptied bonus field
- * requests the server's own default of `0`.
+ * every exercise id it knows about explicitly. There is no `bonus_points` here — it is the exam's
+ * single amount (§7.3), edited via `updateExam`, not part of a per-row save.
  */
 export interface PointsRowWrite {
   registration_id: number;
   attended: boolean | null;
-  bonus_points: string | null;
   points: Record<string, string | null>;
 }
 

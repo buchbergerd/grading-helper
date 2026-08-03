@@ -607,8 +607,6 @@ def update_registration(
         # NULL stays meaningful here (§4): "not yet recorded", which the §8.1 completeness gate
         # must be able to tell apart from an explicit "nicht erschienen".
         registration.attended = payload.attended
-    if payload.bonus_points is not None:
-        registration.bonus_points = payload.bonus_points
 
     db.commit()
     db.refresh(registration)

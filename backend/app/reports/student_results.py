@@ -101,6 +101,7 @@ def build_student_results_data(exam: Exam) -> StudentResultsData:
                 thresholds=thresholds,
                 max_points=max_points,
                 bonus_mode=exam.bonus_mode,
+                bonus_points=exam.bonus_points,
             ),
         )
         for registration in registrations

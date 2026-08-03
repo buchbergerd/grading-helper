@@ -307,6 +307,7 @@ def test_create_exam_returns_the_contract_shape(
         "termin",
         "exam_date",
         "bonus_mode",
+        "bonus_points",
         "owner_id",
         "exercises",
         "grading_schema",
@@ -316,6 +317,7 @@ def test_create_exam_returns_the_contract_shape(
     }
     assert body["exam_date"] == "2024-02-13"
     assert body["bonus_mode"] == "ONLY_IF_PASSING_WITHOUT_BONUS"
+    assert body["bonus_points"] == "0"
     assert body["owner_id"] == instructor_user.id
     assert body["lecture_name"] == "Grundlagen der Informationstechnik"
     assert body["registration_count"] == 0
@@ -332,6 +334,7 @@ def test_create_exam_defaults_are_empty_and_always(
     body = post_exam(instructor_client, lecture_id)
 
     assert body["bonus_mode"] == "ALWAYS"
+    assert body["bonus_points"] == "0"
     assert body["exercises"] == []
     assert body["grading_schema"] == []
     assert body["exam_date"] is None
@@ -371,6 +374,21 @@ def test_patch_updates_scalar_fields(instructor_client: TestClient, lecture_id: 
     assert body["exam_date"] is None  # explicit null clears the date
     assert body["bonus_mode"] == "ONLY_IF_PASSING_WITHOUT_BONUS"
     assert body["recomputation_warning"] is None  # no collection was replaced
+
+
+def test_negative_bonus_points_is_rejected_on_create_and_patch(
+    instructor_client: TestClient, lecture_id: int
+) -> None:
+    """§7.3: bonus_points is exam-wide now, so its negative check lives here, not a points save."""
+    created = instructor_client.post(
+        f"/api/lectures/{lecture_id}/exams",
+        json={"semester": "WiSe 23/24", "termin": "1. Termin", "bonus_points": "-1"},
+    )
+    assert created.status_code == 422
+
+    exam = post_exam(instructor_client, lecture_id)
+    patched = instructor_client.patch(f"/api/exams/{exam['id']}", json={"bonus_points": "-1"})
+    assert patched.status_code == 422
 
 
 def test_patch_leaves_omitted_fields_alone(instructor_client: TestClient, lecture_id: int) -> None:
@@ -813,6 +831,7 @@ def test_copy_forward_takes_the_most_recent_prior_exam(
         semester="WiSe 23/24",
         exam_date="2024-02-13",
         bonus_mode="ONLY_IF_PASSING_WITHOUT_BONUS",
+        bonus_points="5",
         exercises=[
             {"name": "Aufgabe 1", "max_points": "35"},
             {"name": "Aufgabe 2", "max_points": "25"},
@@ -835,6 +854,9 @@ def test_copy_forward_takes_the_most_recent_prior_exam(
     assert len(fresh["grading_schema"]) == 10
     # §4 lists bonus_mode among the copied-forward settings.
     assert fresh["bonus_mode"] == "ONLY_IF_PASSING_WITHOUT_BONUS"
+    # ...but not bonus_points (§4): it's this exam's own entered result, not configuration, so it
+    # always starts at 0 regardless of the prior exam's 5.
+    assert fresh["bonus_points"] == "0"
 
 
 def test_copy_forward_breaks_a_date_tie_by_newest_id(
@@ -1010,6 +1032,53 @@ def test_scalar_only_patch_does_not_warn(
     add_registration(session, int(exam["id"]), "1000001")
 
     body = instructor_client.patch(f"/api/exams/{exam['id']}", json={"termin": "2. Termin"}).json()
+
+    assert body["recomputation_warning"] is None
+
+
+def test_bonus_points_change_with_registrations_warns(
+    instructor_client: TestClient, lecture_id: int, session: Session
+) -> None:
+    """§7.3/§8.1: bonus_points is one exam-wide amount now, so changing it can move every
+    non-excluded student's grade in a single edit — the same silent-shift risk a grading-schema
+    edit poses, and it must be caught the same way."""
+    exam = post_exam(
+        instructor_client,
+        lecture_id,
+        exercises=[{"name": "Aufgabe 1", "max_points": "60"}],
+        grading_schema=VALID_SCHEMA,
+    )
+    registration = add_registration(session, int(exam["id"]), "1000001")
+    registration.attended = True
+    exercise_id = int(exam["exercises"][0]["id"])
+    session.add(
+        ExercisePoints(registration_id=registration.id, exercise_id=exercise_id, points=Decimal(30))
+    )
+    session.commit()
+
+    # raw_total 30.0 -> "4.0" before; ALWAYS + bonus 3 -> final_total 33.0 -> "3.7" after.
+    body = instructor_client.patch(f"/api/exams/{exam['id']}", json={"bonus_points": "3"}).json()
+
+    assert body["bonus_points"] == "3"
+    assert body["recomputation_warning"] == {
+        "changed": True,
+        "affected_registrations": 1,
+        "grades_changed": 1,
+    }
+
+
+def test_bonus_points_patch_to_the_same_value_does_not_warn(
+    instructor_client: TestClient, lecture_id: int, session: Session
+) -> None:
+    exam = post_exam(
+        instructor_client,
+        lecture_id,
+        exercises=[{"name": "Aufgabe 1", "max_points": "60"}],
+        grading_schema=VALID_SCHEMA,
+    )
+    add_registration(session, int(exam["id"]), "1000001")
+
+    body = instructor_client.patch(f"/api/exams/{exam['id']}", json={"bonus_points": "0"}).json()
 
     assert body["recomputation_warning"] is None
 

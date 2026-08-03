@@ -574,7 +574,7 @@ def test_list_is_sorted_by_course_then_name_and_can_filter(
     # ``sorted()`` would put it after "Zwerg" (§6).
     assert "Öztürk" in first_course
     assert first_course.index("Öztürk") < first_course.index("Rotkäppchen")
-    assert {"flagged", "excluded", "attended", "bonus_points"} <= set(body[0])
+    assert {"flagged", "excluded", "attended"} <= set(body[0])
 
     filtered = api.get(
         f"/api/exams/{instructor_exam.id}/registrations", params={"course_code": COURSE_2}
@@ -603,7 +603,6 @@ def test_manual_add_edit_and_delete(
     assert body["source_filename"] is None
     assert body["flagged"] is False
     assert body["excluded"] is False
-    assert body["bonus_points"] == "0"
     registration_id = body["id"]
 
     patched = api.patch(

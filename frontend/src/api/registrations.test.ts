@@ -6,7 +6,6 @@ import {
   extractDuplicates,
   importRegistrations,
   listRegistrations,
-  updateRegistration,
   type RegistrationOut,
 } from "./client";
 import { ApiError } from "./client";
@@ -28,7 +27,6 @@ const REGISTRATION: RegistrationOut = {
   flagged: false,
   excluded: false,
   attended: null,
-  bonus_points: "12.50",
   source_filename: "a.pdf",
 };
 
@@ -118,24 +116,6 @@ describe("listRegistrations", () => {
     await listRegistrations(7, { courseCode: "B.Sc. WiIng ET/IT" });
     const url = String(mock.mock.calls[0]?.[0]);
     expect(url).toContain("course_code=B.Sc.%20WiIng%20ET%2FIT");
-  });
-});
-
-describe("updateRegistration — bonus_points never becomes a number", () => {
-  it("sends bonus_points as a JSON string, digits unchanged, and the response keeps it a string", async () => {
-    const mock = installFetchMock({
-      "/api/registrations/1": () => jsonResponse(200, { ...REGISTRATION, bonus_points: "12.50" }),
-    });
-
-    const result = await updateRegistration(1, { bonus_points: "12.50" });
-
-    const init = mock.mock.calls[0]?.[1];
-    const sent = JSON.parse(String(init?.body)) as { bonus_points: unknown };
-    expect(typeof sent.bonus_points).toBe("string");
-    expect(sent.bonus_points).toBe("12.50");
-
-    expect(typeof result.bonus_points).toBe("string");
-    expect(result.bonus_points).toBe("12.50");
   });
 });
 

@@ -71,6 +71,8 @@ User (instructor or admin)
             owner: User (defaults to Lecture's owner, editable)
             grading_schema (per-grade percentage thresholds — see §7)
             bonus_mode: ALWAYS | ONLY_IF_PASSING_WITHOUT_BONUS  (see §7.3)
+            bonus_points: decimal (default 0) — one amount, set by the instructor for the whole
+              exam and applied identically to every non-excluded student (see §7.3)
             exercises: [ { name, max_points }, ... ]
             └─ StudentRegistration (one per student, imported from PDF or added manually)
                  matrikelnummer, nachname, vorname
@@ -83,14 +85,15 @@ User (instructor or admin)
                  flagged: bool  (true if kommentar isn't a normal "registered" status)
                  attended: bool | null   (null = not yet recorded)
                  exercise_points: { exercise_id: points, ... }
-                 bonus_points: decimal (default 0)
                  → computed: raw_total, final_total, grade  (see §7)
 ```
 
 **New exam creation**: when an instructor creates a new Exam under an existing Lecture, the app
 pre-fills `grading_schema`, `bonus_mode`, and the `exercises` list from that Lecture's most
 recent prior Exam, as an editable starting point (nothing is locked/inherited live — it's a
-one-time copy at creation time).
+one-time copy at creation time). `bonus_points` is **not** copied forward — unlike the other
+three, it is this exam's own entered result, not reusable configuration, so a new Exam always
+starts at 0.
 
 **Course (Studiengang)** is *not* a separate managed entity in v1 — `course_code` and
 `module_title` are both free text captured per imported PDF (see §5). No canonical Studiengang
@@ -288,8 +291,10 @@ their `final_total`. Below the 4.0 threshold → fail.
 
 ### 7.3 Bonus points
 
-Bonus points are entered per student (default 0), on top of the sum of their exercise points
-(`raw_total`). Per-exam setting **`bonus_mode`**:
+There is one `bonus_points` amount per exam (default 0), set by the instructor and applied
+identically to every non-excluded student, on top of each student's own sum of exercise points
+(`raw_total`). It is not entered per student. Per-exam setting **`bonus_mode`** then governs
+whether and how it counts for a given student:
 
 - **ALWAYS**: `final_total = raw_total + bonus_points`, uncapped (may exceed max_points),
   compared directly against thresholds.
@@ -316,7 +321,8 @@ Exam with `max_points = 60`. Grading schema configured with (among others) 1.0 a
 | 1.0 | 95% | floor(57.0 / 0.5) × 0.5 = **57.0** |
 | 4.0 | 50% | floor(30.0 / 0.5) × 0.5 = **30.0** |
 
-Given these thresholds:
+Given these thresholds (`bonus_points` is the exam's one shared value, applied the same way to
+every row it appears in):
 
 | `raw_total` | `bonus_points` | `bonus_mode` | `attended` | `final_total` | **Grade** |
 |---|---|---|---|---|---|
@@ -334,7 +340,8 @@ Given these thresholds:
 - One row per student (grouped/filterable by course), showing `matrikelnummer`, name,
   **`versuch`** (read-only, imported from the PDF — visible here since it's the natural place
   an instructor checking a borderline case wants to see it), and editable fields: attendance
-  checkbox, one point-value field per exercise, bonus-points field.
+  checkbox, one point-value field per exercise. The exam's single `bonus_points` field is
+  entered once for the whole exam (alongside `bonus_mode`), not per row.
 - Exercise point totals are shown live per student (sum of entered exercise points), and the
   computed final total + resulting grade update live as values change (server-validated on
   save, not just client-side).
@@ -350,12 +357,14 @@ Given these thresholds:
   `attended = true` student has all exercise points entered. If any student is incomplete,
   block export and show the instructor the specific list of incomplete rows — never generate a
   report with implicit zeros or missing grades.
-- Editing `max_points` on an exercise, or editing the grading schema's percentages, **after**
-  points have already been entered for some students **must trigger a full recomputation** of
-  every affected student's `final_total`/grade, and the UI must visibly warn the instructor that
-  this happened (e.g. "Grading schema changed — N students' grades were recalculated") — grade
-  thresholds must never shift silently under data the instructor may already have transcribed
-  onto paper exams.
+- Editing `max_points` on an exercise, editing the grading schema's percentages, or editing the
+  exam's `bonus_points` amount, **after** points have already been entered for some students
+  **must trigger a full recomputation** of every affected student's `final_total`/grade, and the
+  UI must visibly warn the instructor that this happened (e.g. "Grading schema changed — N
+  students' grades were recalculated") — grade thresholds must never shift silently under data
+  the instructor may already have transcribed onto paper exams. Since `bonus_points` is now one
+  shared amount (§7.3), changing it can move every non-excluded student's grade in a single edit,
+  exactly the silent-shift risk this gate exists to catch.
 
 ---
 

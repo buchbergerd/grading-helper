@@ -52,6 +52,7 @@ const EXAM: ExamDetail = {
   termin: "1. Termin",
   exam_date: "2024-02-15",
   bonus_mode: "ALWAYS",
+  bonus_points: "0",
   owner_id: 1,
   registration_count: 39,
   exercises: [],
