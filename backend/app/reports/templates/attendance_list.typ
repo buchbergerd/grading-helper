@@ -104,11 +104,3 @@
   #v(8pt)
   #emph[Für diese Prüfung sind keine Studierenden angemeldet.]
 ]
-
-#v(14pt)
-#grid(
-  columns: (1fr, 1fr),
-  column-gutter: 20pt,
-  [#line(length: 100%, stroke: 0.5pt) #text(size: 8.5pt)[Ort, Datum]],
-  [#line(length: 100%, stroke: 0.5pt) #text(size: 8.5pt)[Unterschrift Aufsicht]],
-)
