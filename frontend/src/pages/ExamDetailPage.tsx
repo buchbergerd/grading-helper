@@ -9,6 +9,7 @@ import {
   type ExamDetail,
   type Exercise,
   type GradingSchemaRow,
+  type RecomputationWarning,
 } from "../api/client";
 import { BackButton } from "../components/BackButton";
 import { ConfirmDialog } from "../components/ConfirmDialog";
@@ -116,6 +117,13 @@ export default function ExamDetailPage(): JSX.Element {
   const [loading, setLoading] = useState(true);
   const [messages, setMessages] = useState<string[]>([]);
   const [saved, setSaved] = useState(false);
+  // §8.1: set from the last successful save's own response, never from `reload`/`getExam` (which
+  // always comes back `null` — the backend only computes this on a PATCH that just moved grade
+  // thresholds under existing data). Cleared at the top of `onSave`, same as `saved`, so it never
+  // outlives the save it describes.
+  const [recomputationWarning, setRecomputationWarning] = useState<RecomputationWarning | null>(
+    null,
+  );
   const [saving, setSaving] = useState(false);
   const [pendingDelete, setPendingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -243,6 +251,7 @@ export default function ExamDetailPage(): JSX.Element {
     event.preventDefault();
     if (examId === null) return;
     setSaved(false);
+    setRecomputationWarning(null);
     // Any server-field markers from a previous failed attempt no longer apply to this attempt —
     // it either succeeds (cleared again below) or fails with a fresh set (repopulated below).
     setServerGradeErrors(new Map());
@@ -285,18 +294,18 @@ export default function ExamDetailPage(): JSX.Element {
 
     setSaving(true);
     try {
-      applyExam(
-        await updateExam(examId, {
-          semester: semester.trim(),
-          termin: termin.trim(),
-          exam_date: isoDate,
-          // Full replace, not a merge — the contract is explicit about this.
-          exercises: exercisePayload,
-          ...(schemaIsEmpty ? {} : { grading_schema: schemaPayload }),
-        }),
-      );
+      const updated = await updateExam(examId, {
+        semester: semester.trim(),
+        termin: termin.trim(),
+        exam_date: isoDate,
+        // Full replace, not a merge — the contract is explicit about this.
+        exercises: exercisePayload,
+        ...(schemaIsEmpty ? {} : { grading_schema: schemaPayload }),
+      });
+      applyExam(updated);
       setMessages([]);
       setSaved(true);
+      setRecomputationWarning(updated.recomputation_warning);
     } catch (error) {
       const serverMessages = errorMessages(error);
       setMessages(serverMessages);
@@ -375,6 +384,20 @@ export default function ExamDetailPage(): JSX.Element {
 
       <ErrorList messages={messages} title={messages.length > 1 ? "Bitte prüfen:" : undefined} />
       {saved ? <SuccessNotice>Die Klausur wurde gespeichert.</SuccessNotice> : null}
+      {/* §8.1: grade thresholds must never shift silently under data an instructor may already
+          have transcribed onto paper exams — `grades_changed` is deliberately stricter than
+          `affected_registrations` (see RecomputationWarning's own doc), so this stays quiet on an
+          edit that touched registrations but left every grade exactly where it was. */}
+      {recomputationWarning !== null && recomputationWarning.grades_changed > 0 ? (
+        <div className="notice warn" role="alert" data-testid="recomputation-warning">
+          Durch diese Änderung hat sich die Notenberechnung verschoben:{" "}
+          <strong>{recomputationWarning.grades_changed}</strong>{" "}
+          {recomputationWarning.grades_changed === 1
+            ? "Studierende bzw. Studierender hat"
+            : "Studierende haben"}{" "}
+          jetzt eine andere Note.
+        </div>
+      ) : null}
 
       <form onSubmit={(event) => void onSave(event)}>
         <div className="panel">

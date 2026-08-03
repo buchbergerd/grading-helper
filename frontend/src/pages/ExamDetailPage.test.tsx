@@ -26,6 +26,7 @@ const EXAM: ExamDetail = {
   bonus_points: "0",
   owner_id: 1,
   registration_count: 42,
+  recomputation_warning: null,
   exercises: [
     { id: 1, name: "Aufgabe 1", max_points: "12.50", position: 1 },
     { id: 2, name: "Aufgabe 2", max_points: "0.75", position: 2 },
@@ -299,6 +300,83 @@ describe("ExamDetailPage — bonus mode moved to the points-entry page (§7.3)",
     });
     const sent = JSON.parse(String(mock.mock.calls[1]?.[1]?.body)) as Record<string, unknown>;
     expect(sent).not.toHaveProperty("bonus_mode");
+  });
+});
+
+describe("ExamDetailPage — §8.1 recomputation warning", () => {
+  function renderWithPatchResponse(
+    patchResponse: ExamDetail,
+  ): ReturnType<typeof installFetchMock> {
+    const mock = installFetchMock({
+      "/api/exams/7": (_url, init) =>
+        jsonResponse(200, init?.method === "PATCH" ? patchResponse : EXAM),
+    });
+    render(
+      <MemoryRouter initialEntries={["/klausuren/7"]}>
+        <Routes>
+          <Route path="/klausuren/:examId" element={<ExamDetailPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    return mock;
+  }
+
+  it("shows a warning naming the number of students whose grade moved", async () => {
+    const user = userEvent.setup();
+    renderWithPatchResponse({
+      ...EXAM,
+      recomputation_warning: { changed: true, affected_registrations: 5, grades_changed: 2 },
+    });
+
+    await screen.findByLabelText("Maximale Punkte der Aufgabe 1");
+    await user.click(screen.getByRole("button", { name: "Speichern" }));
+
+    const warning = await screen.findByTestId("recomputation-warning");
+    expect(warning.textContent).toContain("2");
+    expect(warning.textContent).toContain("Studierende haben");
+  });
+
+  it("uses singular wording for exactly one changed grade", async () => {
+    const user = userEvent.setup();
+    renderWithPatchResponse({
+      ...EXAM,
+      recomputation_warning: { changed: true, affected_registrations: 5, grades_changed: 1 },
+    });
+
+    await screen.findByLabelText("Maximale Punkte der Aufgabe 1");
+    await user.click(screen.getByRole("button", { name: "Speichern" }));
+
+    const warning = await screen.findByTestId("recomputation-warning");
+    expect(warning.textContent).toContain("Studierende bzw. Studierender hat");
+  });
+
+  it("shows nothing when the response carries no warning", async () => {
+    const user = userEvent.setup();
+    renderWithPatchResponse({ ...EXAM, recomputation_warning: null });
+
+    await screen.findByLabelText("Maximale Punkte der Aufgabe 1");
+    await user.click(screen.getByRole("button", { name: "Speichern" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Die Klausur wurde gespeichert.")).not.toBeNull();
+    });
+    expect(screen.queryByTestId("recomputation-warning")).toBeNull();
+  });
+
+  it("stays quiet when the edit touched registrations but changed no grade (grades_changed: 0)", async () => {
+    const user = userEvent.setup();
+    renderWithPatchResponse({
+      ...EXAM,
+      recomputation_warning: { changed: true, affected_registrations: 5, grades_changed: 0 },
+    });
+
+    await screen.findByLabelText("Maximale Punkte der Aufgabe 1");
+    await user.click(screen.getByRole("button", { name: "Speichern" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Die Klausur wurde gespeichert.")).not.toBeNull();
+    });
+    expect(screen.queryByTestId("recomputation-warning")).toBeNull();
   });
 });
 

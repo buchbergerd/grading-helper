@@ -18,6 +18,7 @@ const EXAM: ExamDetail = {
   bonus_points: "0",
   owner_id: 1,
   registration_count: 3,
+  recomputation_warning: null,
   exercises: [],
   grading_schema: [],
 };
@@ -427,6 +428,63 @@ describe("PointsEntryPage — bonus mode (§7.3, moved here from ExamDetailPage)
       );
     });
     expect(patchCallsTo(mock, "/api/exams/7").length).toBe(0);
+  });
+});
+
+describe("PointsEntryPage — §8.1 recomputation warning", () => {
+  it("shows a warning naming the number of students whose grade moved", async () => {
+    const user = userEvent.setup();
+    renderPage({
+      "/api/exams/7": () =>
+        jsonResponse(200, {
+          ...EXAM,
+          recomputation_warning: { changed: true, affected_registrations: 2, grades_changed: 2 },
+        }),
+    });
+
+    const bonusField = await screen.findByTestId("bonus-points");
+    await user.clear(bonusField);
+    await user.type(bonusField, "3");
+    await user.click(screen.getByRole("button", { name: "Speichern" }));
+
+    const warning = await screen.findByTestId("recomputation-warning");
+    expect(warning.textContent).toContain("2");
+    expect(warning.textContent).toContain("Studierende haben");
+  });
+
+  it("shows nothing when the save never touched bonus_mode/bonus_points (no exam PATCH at all)", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByTestId("points-row-1");
+    await user.click(screen.getByTestId("attended-2-present")); // enable Speichern without touching bonus
+    await user.click(screen.getByRole("button", { name: "Speichern" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Die Änderungen wurden gespeichert.")).not.toBeNull();
+    });
+    expect(screen.queryByTestId("recomputation-warning")).toBeNull();
+  });
+
+  it("stays quiet when grades_changed is 0 even though bonus_points was patched", async () => {
+    const user = userEvent.setup();
+    renderPage({
+      "/api/exams/7": () =>
+        jsonResponse(200, {
+          ...EXAM,
+          recomputation_warning: { changed: true, affected_registrations: 2, grades_changed: 0 },
+        }),
+    });
+
+    const bonusField = await screen.findByTestId("bonus-points");
+    await user.clear(bonusField);
+    await user.type(bonusField, "3");
+    await user.click(screen.getByRole("button", { name: "Speichern" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Die Änderungen wurden gespeichert.")).not.toBeNull();
+    });
+    expect(screen.queryByTestId("recomputation-warning")).toBeNull();
   });
 });
 

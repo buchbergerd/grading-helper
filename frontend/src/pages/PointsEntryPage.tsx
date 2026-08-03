@@ -25,6 +25,7 @@ import {
   type PointsExercise,
   type PointsGrid,
   type PointsRowWrite,
+  type RecomputationWarning,
 } from "../api/client";
 import { BackButton } from "../components/BackButton";
 import { ConfirmDialog } from "../components/ConfirmDialog";
@@ -163,6 +164,12 @@ export default function PointsEntryPage(): JSX.Element {
   // a warning describes the *previous* save's data, and must not linger once the instructor has
   // already changed the value it was about.
   const [saveWarnings, setSaveWarnings] = useState<string[]>([]);
+  // §8.1: only ever set from a save that actually changed bonus_mode/bonus_points (see onSave) —
+  // grade thresholds must never shift silently under data already entered for other students.
+  // Cleared on any further edit, same reasoning as saveWarnings above.
+  const [recomputationWarning, setRecomputationWarning] = useState<RecomputationWarning | null>(
+    null,
+  );
 
   const [courseFilter, setCourseFilter] = useState("");
 
@@ -212,6 +219,7 @@ export default function PointsEntryPage(): JSX.Element {
       setGridMessages([]);
       setDirty(false);
       setSaveWarnings([]);
+      setRecomputationWarning(null);
     } catch (error) {
       setGridMessages(errorMessages(error));
     } finally {
@@ -264,6 +272,7 @@ export default function PointsEntryPage(): JSX.Element {
     setDirty(true);
     setSavedNotice(false);
     setSaveWarnings([]);
+    setRecomputationWarning(null);
   }
 
   function updateBonusPoints(text: string): void {
@@ -271,6 +280,7 @@ export default function PointsEntryPage(): JSX.Element {
     setDirty(true);
     setSavedNotice(false);
     setSaveWarnings([]);
+    setRecomputationWarning(null);
   }
 
   function updateBonusMode(mode: BonusMode): void {
@@ -278,6 +288,7 @@ export default function PointsEntryPage(): JSX.Element {
     setDirty(true);
     setSavedNotice(false);
     setSaveWarnings([]);
+    setRecomputationWarning(null);
   }
 
   function updatePoint(registrationId: number, exerciseId: number, text: string): void {
@@ -291,6 +302,7 @@ export default function PointsEntryPage(): JSX.Element {
     setDirty(true);
     setSavedNotice(false);
     setSaveWarnings([]);
+    setRecomputationWarning(null);
   }
 
   /* ---------------------------------------------------------------------------- keyboard nav */
@@ -389,6 +401,7 @@ export default function PointsEntryPage(): JSX.Element {
     setSaving(true);
     setGridMessages([]);
     setSavedNotice(false);
+    setRecomputationWarning(null);
     try {
       const payload = buildSavePayload(rows, grid.exercises);
       // bonus_mode and bonus_points are both fields of the exam (not the points grid) on the
@@ -419,6 +432,7 @@ export default function PointsEntryPage(): JSX.Element {
             ? prev
             : { ...prev, bonus_mode: updatedExam.bonus_mode, bonus_points: updatedExam.bonus_points },
         );
+        setRecomputationWarning(updatedExam.recomputation_warning);
       }
       setDirty(false);
       setSavedNotice(true);
@@ -476,6 +490,7 @@ export default function PointsEntryPage(): JSX.Element {
     setDirty(true);
     setSavedNotice(false);
     setSaveWarnings([]);
+    setRecomputationWarning(null);
   }
 
   // A compact, row-height-preserving alternative to a field-error span under every offending
@@ -654,6 +669,19 @@ export default function PointsEntryPage(): JSX.Element {
         />
       </div>
       {savedNotice ? <SuccessNotice>Die Änderungen wurden gespeichert.</SuccessNotice> : null}
+      {/* §8.1: bonus_points/bonus_mode are exam-wide now, so changing either can move every
+          non-excluded student's grade in this one save — see RecomputationWarning's own doc for
+          why grades_changed, not affected_registrations, gates whether this shows at all. */}
+      {recomputationWarning !== null && recomputationWarning.grades_changed > 0 ? (
+        <div className="notice warn" role="alert" data-testid="recomputation-warning">
+          Durch diese Änderung hat sich die Notenberechnung verschoben:{" "}
+          <strong>{recomputationWarning.grades_changed}</strong>{" "}
+          {recomputationWarning.grades_changed === 1
+            ? "Studierende bzw. Studierender hat"
+            : "Studierende haben"}{" "}
+          jetzt eine andere Note.
+        </div>
+      ) : null}
       {!grid.grading_configured ? (
         <p className="muted small">
           Der Notenschlüssel ist noch nicht konfiguriert — es kann noch keine Notenvorschau

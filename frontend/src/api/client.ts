@@ -78,10 +78,25 @@ export interface ExamSummary {
   owner_id: number;
 }
 
+/**
+ * §8.1: whether/how many grades moved because a `PATCH` replaced `exercises`, `grading_schema`,
+ * or `bonus_points` while the exam already had registrations — grade thresholds must never shift
+ * silently under data an instructor may already have transcribed onto paper exams. `null` unless
+ * one of those three actually changed with existing registrations present; `changed` and
+ * `affected_registrations` are the coarse "could this matter" signal, `grades_changed` is the
+ * precise "did it actually" one (see the field's own doc in `app/api/schemas.py`).
+ */
+export interface RecomputationWarning {
+  changed: boolean;
+  affected_registrations: number;
+  grades_changed: number;
+}
+
 export interface ExamDetail extends ExamSummary {
   exercises: Exercise[];
   grading_schema: GradingSchemaRow[];
   registration_count: number;
+  recomputation_warning: RecomputationWarning | null;
 }
 
 /** Body for POST/PATCH on exams. Exercises/schema are a full replace, never a merge. */

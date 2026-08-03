@@ -18,6 +18,7 @@ const EXAM: ExamDetail = {
   bonus_points: "0",
   owner_id: 1,
   registration_count: 3,
+  recomputation_warning: null,
   exercises: [],
   grading_schema: [],
 };
