@@ -150,7 +150,7 @@ describe("downloadAttendanceList", () => {
         }),
     });
 
-    const result = await downloadAttendanceList(7);
+    const result = await downloadAttendanceList(7, "course_nachname");
     expect(result.blob).toBe(pdfBlob);
     expect(result.filename).toBe("anwesenheitsliste_Öztürk.pdf");
   });
@@ -161,7 +161,7 @@ describe("downloadAttendanceList", () => {
       "/api/exams/7/reports/attendance-list": () => blobResponse(200, pdfBlob),
     });
 
-    const result = await downloadAttendanceList(7);
+    const result = await downloadAttendanceList(7, "course_nachname");
     expect(result.filename).toBe("anwesenheitsliste.pdf");
   });
 
@@ -170,6 +170,18 @@ describe("downloadAttendanceList", () => {
       "/api/exams/7/reports/attendance-list": () => jsonResponse(404, { detail: "Nicht gefunden." }),
     });
 
-    await expect(downloadAttendanceList(7)).rejects.toBeInstanceOf(ApiError);
+    await expect(downloadAttendanceList(7, "course_nachname")).rejects.toBeInstanceOf(ApiError);
+  });
+
+  it("sends the chosen sort order as a query parameter", async () => {
+    const pdfBlob = new Blob(["%PDF-1.4"], { type: "application/pdf" });
+    const mock = installFetchMock({
+      "/api/exams/7/reports/attendance-list": () => blobResponse(200, pdfBlob),
+    });
+
+    await downloadAttendanceList(7, "matrikelnummer");
+
+    const requestedUrl = String(mock.mock.calls[0]?.[0]);
+    expect(requestedUrl).toBe("/api/exams/7/reports/attendance-list?sort_order=matrikelnummer");
   });
 });

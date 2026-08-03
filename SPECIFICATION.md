@@ -215,11 +215,16 @@ When multiple PDFs are uploaded for one Exam:
 
 - Purpose: printed once before the exam, instructor ticks off attendance by hand.
 - Columns: **Studiengang (`course_code`), Matr.-Nr., Nachname, Vorname**.
-- Sort: by course, then by last name within course, using **German (DIN 5007-1) collation**
-  (e.g. "Öztürk" sorts under "O", not after "Z"; ß ≍ ss) — a plain byte/codepoint sort
-  visibly mis-orders the printed sheet the instructor physically ticks names off on. Names are
-  sorted exactly as printed in the source PDF (e.g. "von Arendelle" sorts under "V", as given —
-  no attempt to detect/reorder nobiliary particles).
+- Sort: default is by course, then by last name within course, using **German (DIN 5007-1)
+  collation** (e.g. "Öztürk" sorts under "O", not after "Z"; ß ≍ ss) — a plain byte/codepoint
+  sort visibly mis-orders the printed sheet the instructor physically ticks names off on. Names
+  are sorted exactly as printed in the source PDF (e.g. "von Arendelle" sorts under "V", as
+  given — no attempt to detect/reorder nobiliary particles). The instructor may instead print in
+  one of three alternate orders — by Nachname alone, by Matrikelnummer alone, or by course then
+  Matrikelnummer — chosen via a radio selection before download; Nachname-based orders still use
+  DIN 5007-1 collation, and Matrikelnummer sorts as the opaque identifier string it is (never
+  coerced to a number). This choice affects only the printed row order, never which rows are
+  excluded or how the head count is computed.
 - One PDF, generated on demand from the current Exam's student list.
 - Also used to get the head-count for how many physical exam copies to print (a simple count
   is shown in the UI before/without needing to generate the PDF).

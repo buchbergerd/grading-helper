@@ -21,6 +21,7 @@ from app.auth.dependencies import CurrentUser, DbSession
 from app.grading.schema import GRADES
 from app.models import Exam
 from app.reports.attendance_list import (
+    AttendanceListSortOrder,
     attendance_list_filename,
     build_attendance_list_data,
     content_disposition,
@@ -90,12 +91,21 @@ def _require_exportable(exam: Exam) -> None:
         }
     },
 )
-def attendance_list_report(exam_id: int, user: CurrentUser, db: DbSession) -> Response:
+def attendance_list_report(
+    exam_id: int,
+    user: CurrentUser,
+    db: DbSession,
+    sort_order: AttendanceListSortOrder = AttendanceListSortOrder.COURSE_NACHNAME,
+) -> Response:
     """The exam's print-and-tick attendance list as a PDF (§6).
 
     Excluded students are omitted and the rows are German-collated in
     :func:`~app.reports.attendance_list.build_attendance_list_data`; this route only wires the
     ownership check to the renderer.
+
+    ``sort_order`` picks one of the four printable orders (§6's course-then-Nachname default plus
+    Nachname-only, Matrikelnummer-only and course-then-Matrikelnummer); an unknown value is
+    rejected with ``422`` by FastAPI's own enum validation, no explicit check needed here.
 
     An exam with no (non-excluded) registrations yields a valid PDF showing a head count of 0
     rather than an error — printing the sheet before importing the registration lists is a
@@ -105,7 +115,7 @@ def attendance_list_report(exam_id: int, user: CurrentUser, db: DbSession) -> Re
     work, and FastAPI runs a sync route in a worker thread instead of stalling the event loop.
     """
     exam = get_owned_exam(db, user, exam_id)
-    pdf = render_attendance_list(build_attendance_list_data(exam))
+    pdf = render_attendance_list(build_attendance_list_data(exam, sort_order=sort_order))
     return Response(
         content=pdf,
         media_type=PDF_MEDIA_TYPE,

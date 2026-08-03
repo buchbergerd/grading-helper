@@ -174,12 +174,17 @@ messages are shown verbatim; per §5.3 these are hard failures the instructor mu
 
 | Method | Path | Response |
 |---|---|---|
-| GET | `/api/exams/{id}/reports/attendance-list` | `200 application/pdf` + `Content-Disposition` (ASCII fallback plus RFC 5987 `filename*` for umlauts) |
+| GET | `/api/exams/{id}/reports/attendance-list?sort_order=...` | `200 application/pdf` + `Content-Disposition` (ASCII fallback plus RFC 5987 `filename*` for umlauts) |
 
-Columns are Studiengang, Matr.-Nr., Nachname, Vorname plus a tick column, sorted by course then
-surname with **German DIN 5007-1 collation** (§6) computed in Python — never in SQL. Excluded
-students are omitted. An exam with no registrations still renders a valid PDF with a head count
-of 0 rather than erroring.
+Columns are Studiengang, Matr.-Nr., Nachname, Vorname plus a tick column. Excluded students are
+omitted. An exam with no registrations still renders a valid PDF with a head count of 0 rather
+than erroring.
+
+`sort_order` is optional, defaulting to `course_nachname` (course, then surname, both **German
+DIN 5007-1 collated** (§6), computed in Python — never in SQL). The other three values —
+`course_matrikelnummer`, `nachname`, `matrikelnummer` — pick one of the alternate print orders;
+an unrecognised value is rejected with `422` (FastAPI's own enum validation). Matches
+`AttendanceListSortOrder` in `app/reports/attendance_list.py` value-for-value.
 
 ## Points / attendance entry (§8, §8.1) — milestone 3
 

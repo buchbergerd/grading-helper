@@ -33,6 +33,7 @@ from app.models import Exam, Lecture, StudentRegistration, User
 from app.reports.attendance_list import (
     TEMPLATE_PATH,
     AttendanceListData,
+    AttendanceListSortOrder,
     attendance_list_filename,
     build_attendance_list_data,
     content_disposition,
@@ -202,6 +203,68 @@ def test_nobiliary_particle_is_not_reordered(roster_exam: Exam) -> None:
     names = [s["nachname"] for s in build_attendance_list_data(roster_exam)["students"]]
 
     assert names.index("Straßer") < names.index("von Arendelle") < names.index("Zimmermann")
+
+
+#: :attr:`AttendanceListSortOrder.NACHNAME` — same rows as :data:`EXPECTED_ORDER`, but with
+#: course A's "Ackermann" (course B) no longer pinned after course A: once the course grouping is
+#: gone, Ackermann is simply the alphabetically first surname. Every course-A row keeps its
+#: relative order because it was already in global Nachname order within that course.
+NACHNAME_ORDER: list[tuple[str, str, str, str]] = [
+    (COURSE_B, "Ackermann", "Zoe", "9991100"),
+    *EXPECTED_ORDER[:10],
+    (COURSE_B, "Zimmermann", "Nele", "9991900"),
+]
+
+#: :attr:`AttendanceListSortOrder.MATRIKELNUMMER` — pure ascending Matrikelnummer, course
+#: ignored entirely. Every fixture value is 7 digits, so the string sort this app uses (§6's
+#: Matrikelnummer is an identifier, never coerced to an int) matches numeric order here.
+MATRIKELNUMMER_ORDER: list[tuple[str, str, str, str]] = [
+    (COURSE_A, "Obermeier", "Bernd", "9990010"),
+    (COURSE_A, "Müller", "Anna", "9990100"),
+    (COURSE_A, "Müller", "Jonas", "9990200"),
+    (COURSE_A, "Müller", "Anna", "9990300"),
+    (COURSE_A, "Strasser", "Zoe", "9990400"),
+    (COURSE_A, "von Arendelle", "Leyla Olivia", "9990500"),
+    (COURSE_A, "Öztürk", "Aylin", "9990600"),
+    (COURSE_A, "Ostermann", "Finn", "9990700"),
+    (COURSE_A, "Straßer", "Anna", "9990800"),
+    (COURSE_A, "Zimmermann", "Cem", "9990900"),
+    (COURSE_B, "Ackermann", "Zoe", "9991100"),
+    (COURSE_B, "Zimmermann", "Nele", "9991900"),
+]
+
+#: :attr:`AttendanceListSortOrder.COURSE_MATRIKELNUMMER` — course first (same German-collated
+#: course order as the default), then ascending Matrikelnummer within it.
+COURSE_MATRIKELNUMMER_ORDER: list[tuple[str, str, str, str]] = [
+    *[row for row in MATRIKELNUMMER_ORDER if row[0] == COURSE_A],
+    *[row for row in MATRIKELNUMMER_ORDER if row[0] == COURSE_B],
+]
+
+
+@pytest.mark.parametrize(
+    ("sort_order", "expected"),
+    [
+        (AttendanceListSortOrder.COURSE_NACHNAME, EXPECTED_ORDER),
+        (AttendanceListSortOrder.COURSE_MATRIKELNUMMER, COURSE_MATRIKELNUMMER_ORDER),
+        (AttendanceListSortOrder.NACHNAME, NACHNAME_ORDER),
+        (AttendanceListSortOrder.MATRIKELNUMMER, MATRIKELNUMMER_ORDER),
+    ],
+)
+def test_each_sort_order_produces_its_documented_row_order(
+    roster_exam: Exam,
+    sort_order: AttendanceListSortOrder,
+    expected: list[tuple[str, str, str, str]],
+) -> None:
+    data = build_attendance_list_data(roster_exam, sort_order=sort_order)
+
+    assert _rows(data) == expected
+
+
+def test_default_sort_order_is_course_then_nachname(roster_exam: Exam) -> None:
+    """Calling without ``sort_order`` must still be §6's canonical order."""
+    assert build_attendance_list_data(roster_exam) == build_attendance_list_data(
+        roster_exam, sort_order=AttendanceListSortOrder.COURSE_NACHNAME
+    )
 
 
 def test_a_naive_sort_would_mis_order_the_printed_sheet(roster_exam: Exam) -> None:
@@ -432,6 +495,28 @@ def test_route_sets_a_german_download_filename(
     assert 'filename="Anwesenheitsliste_WiSe_23-24_1._Termin.pdf"' in disposition
     assert "filename*=UTF-8''" in disposition
     assert response.headers["cache-control"] == "no-store"
+
+
+def test_route_sort_order_param_changes_the_row_order(
+    instructor_client: TestClient, roster_exam: Exam
+) -> None:
+    response = instructor_client.get(f"{_url(roster_exam.id)}?sort_order=matrikelnummer")
+
+    assert response.status_code == 200
+    text = _pdf_text(response.content)
+    # Matrikelnummer is unique per row (unlike Nachname/Vorname, where this roster deliberately
+    # has duplicates — see ROSTER's two "Müller, Anna" rows), so it is the only text.index() key
+    # that unambiguously locates each row.
+    positions = [text.index(matrikelnummer) for _c, _n, _v, matrikelnummer in MATRIKELNUMMER_ORDER]
+    assert positions == sorted(positions)
+
+
+def test_route_rejects_an_unknown_sort_order(
+    instructor_client: TestClient, roster_exam: Exam
+) -> None:
+    response = instructor_client.get(f"{_url(roster_exam.id)}?sort_order=vorname")
+
+    assert response.status_code == 422
 
 
 def test_route_404_for_another_instructor(other_client: TestClient, roster_exam: Exam) -> None:

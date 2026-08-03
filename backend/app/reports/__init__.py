@@ -3,6 +3,7 @@
 from app.reports.attendance_list import (
     AttendanceListCourse,
     AttendanceListData,
+    AttendanceListSortOrder,
     AttendanceListStudent,
     attendance_list_filename,
     attendance_list_registrations,
@@ -15,6 +16,7 @@ from app.reports.attendance_list import (
 __all__ = [
     "AttendanceListCourse",
     "AttendanceListData",
+    "AttendanceListSortOrder",
     "AttendanceListStudent",
     "attendance_list_filename",
     "attendance_list_registrations",

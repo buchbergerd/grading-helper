@@ -25,7 +25,8 @@ from __future__ import annotations
 import json
 import unicodedata
 from datetime import date
-from functools import lru_cache
+from enum import StrEnum
+from functools import lru_cache, partial
 from pathlib import Path
 from typing import TypedDict
 from urllib.parse import quote
@@ -75,8 +76,30 @@ def format_german_date(value: date | None) -> str | None:
     return None if value is None else f"{value.day:02d}.{value.month:02d}.{value.year:04d}"
 
 
-def _sort_key(registration: StudentRegistration) -> tuple[tuple[str, str], ...]:
-    """§6's sort key: course, then last name, then first name, then Matrikelnummer.
+class AttendanceListSortOrder(StrEnum):
+    """The four printable orders offered on the Anwesenheitsliste panel.
+
+    §6 only specifies one canonical order (:attr:`COURSE_NACHNAME`, course then surname), which
+    stays the default everywhere a caller doesn't pass ``sort_order`` explicitly. The other three
+    are a print-time convenience — e.g. an instructor collecting sheets from an alphabetically
+    seated room wants Nachname-only, one comparing against a Matrikelnummer-ordered seating plan
+    wants one of the Matrikelnummer orders — and change nothing about which rows are on the sheet
+    or how a name itself collates.
+    """
+
+    COURSE_NACHNAME = "course_nachname"
+    COURSE_MATRIKELNUMMER = "course_matrikelnummer"
+    NACHNAME = "nachname"
+    MATRIKELNUMMER = "matrikelnummer"
+
+
+DEFAULT_SORT_ORDER = AttendanceListSortOrder.COURSE_NACHNAME
+
+
+def _sort_key(
+    sort_order: AttendanceListSortOrder, registration: StudentRegistration
+) -> tuple[tuple[str, str], ...]:
+    """§6's sort key (or one of its three siblings), for ``sorted(..., key=partial(...))``.
 
     Every name component goes through :func:`~app.collation.german_sort_key` (DIN 5007-1): a
     plain ``sorted()`` would strand "Öztürk" after "Zimmermann" on the sheet an instructor
@@ -86,39 +109,59 @@ def _sort_key(registration: StudentRegistration) -> tuple[tuple[str, str], ...]:
 
     Note that ``german_sort_key`` returns ``(folded, original)``, so two names that fold alike
     ("Straßer"/"Strasser") are already separated by their original spelling *before* the Vorname
-    element is consulted. The Vorname and Matrikelnummer elements therefore only break genuinely
-    identical surnames — which is precisely their job: making the printed order deterministic for
-    the two "Müller, Anna" and "Müller, Jonas" rows an instructor scans past each other.
-    ``matrikelnummer`` is wrapped in the same key type only to keep the tuple homogeneous; it is
-    an opaque digit string, so its collation is irrelevant.
+    element is consulted. In the two name-based orders, Vorname and Matrikelnummer only break
+    genuinely identical surnames — which is precisely their job: making the printed order
+    deterministic for the two "Müller, Anna" and "Müller, Jonas" rows an instructor scans past
+    each other.
+
+    Matrikelnummer is sorted as the opaque identifier string it is (`app/pdf_import/parser.py`
+    keeps it a string precisely because leading zeros matter), never coerced to an int: the
+    parser enforces no fixed digit count, so a numeric sort would need a rule for mismatched
+    lengths that §6 never asked for. It still goes through ``german_sort_key`` only to keep the
+    tuple's element type homogeneous — digits have no casefold/umlaut distinction, so this is a
+    plain string sort in practice.
     """
-    return (
-        german_sort_key(registration.course_code),
-        german_sort_key(registration.nachname),
-        german_sort_key(registration.vorname),
-        german_sort_key(registration.matrikelnummer),
-    )
+    course = german_sort_key(registration.course_code)
+    nachname = german_sort_key(registration.nachname)
+    vorname = german_sort_key(registration.vorname)
+    matrikelnummer = german_sort_key(registration.matrikelnummer)
+
+    if sort_order is AttendanceListSortOrder.COURSE_NACHNAME:
+        return (course, nachname, vorname, matrikelnummer)
+    if sort_order is AttendanceListSortOrder.COURSE_MATRIKELNUMMER:
+        return (course, matrikelnummer)
+    if sort_order is AttendanceListSortOrder.NACHNAME:
+        return (nachname, vorname, matrikelnummer)
+    return (matrikelnummer,)  # AttendanceListSortOrder.MATRIKELNUMMER
 
 
-def attendance_list_registrations(exam: Exam) -> list[StudentRegistration]:
-    """The exam's printable registrations, in §6 order.
+def attendance_list_registrations(
+    exam: Exam, sort_order: AttendanceListSortOrder = DEFAULT_SORT_ORDER
+) -> list[StudentRegistration]:
+    """The exam's printable registrations, in the requested order (§6 by default).
 
     Excluded students are dropped entirely (§5.3: excluded ≠ deleted — the row stays in the
     database and stays auditable, but appears in no list, report or head count).
     """
     printable = [r for r in exam.registrations if not r.excluded]
-    return sorted(printable, key=_sort_key)
+    return sorted(printable, key=partial(_sort_key, sort_order))
 
 
-def build_attendance_list_data(exam: Exam) -> AttendanceListData:
+def build_attendance_list_data(
+    exam: Exam, sort_order: AttendanceListSortOrder = DEFAULT_SORT_ORDER
+) -> AttendanceListData:
     """The template payload for one exam.
 
     Reads the already-loaded ``exam.registrations`` collection rather than issuing its own query,
     which keeps it a pure function of the ORM object and trivially callable from a test that
     never commits. An attendance list is at most a few hundred rows, so filtering and sorting in
     Python costs nothing.
+
+    The per-course head counts in ``courses`` are always listed course-by-course (German-collated
+    by ``course_code``) regardless of ``sort_order`` — that block answers "how many copies of
+    each course's exam to print," which doesn't depend on how the table below it is ordered.
     """
-    registrations = attendance_list_registrations(exam)
+    registrations = attendance_list_registrations(exam, sort_order)
 
     counts: dict[str, int] = {}
     for registration in registrations:
@@ -130,8 +173,8 @@ def build_attendance_list_data(exam: Exam) -> AttendanceListData:
         termin=exam.termin,
         exam_date=format_german_date(exam.exam_date),
         head_count=len(registrations),
-        # Same order the rows appear in, so the header's per-course counts read top-to-bottom
-        # alongside the table.
+        # German-collated by course_code, independent of sort_order (see the docstring above) —
+        # not necessarily the order courses first appear in the table below.
         courses=[
             AttendanceListCourse(course_code=course_code, count=counts[course_code])
             for course_code in sorted(counts, key=german_sort_key)

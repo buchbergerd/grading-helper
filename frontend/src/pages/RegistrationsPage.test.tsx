@@ -450,6 +450,29 @@ describe("RegistrationsPage — attendance list download", () => {
       expect(errorBox.textContent).toContain("Nicht gefunden.");
     });
   });
+
+  it("defaults to course-then-Nachname and sends the radio selection as sort_order", async () => {
+    const user = userEvent.setup();
+    const pdfBlob = new Blob(["%PDF-1.4 ..."], { type: "application/pdf" });
+    const mock = renderPage({
+      "/api/exams/7/reports/attendance-list": () => blobResponse(200, pdfBlob),
+    });
+
+    const defaultRadio = (await screen.findByRole("radio", {
+      name: "Studiengang, dann Nachname",
+    })) as HTMLInputElement;
+    expect(defaultRadio.checked).toBe(true);
+
+    await user.click(screen.getByRole("radio", { name: "Matrikelnummer" }));
+    await user.click(
+      screen.getByRole("button", { name: "Anwesenheitsliste als PDF herunterladen" }),
+    );
+
+    await waitFor(() => {
+      const requestedUrl = String(mock.mock.calls.at(-1)?.[0]);
+      expect(requestedUrl).toBe("/api/exams/7/reports/attendance-list?sort_order=matrikelnummer");
+    });
+  });
 });
 
 describe("RegistrationsPage — manual add", () => {

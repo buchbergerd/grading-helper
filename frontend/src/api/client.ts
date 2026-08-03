@@ -485,9 +485,11 @@ export interface RegistrationHeadCount {
 
 /**
  * Every registration of the exam (excluded included — §5.3 keeps them for audit), German-
- * collated by the server (course, then Nachname, then Vorname). Never re-sorted here: a
- * client-side Matr.-Nr. sort would diverge from the §6 attendance-list ordering, which is the
- * authoritative one.
+ * collated by the server (course, then Nachname, then Vorname — §6's default order). Never
+ * re-sorted here: this table always mirrors that one server order, regardless of which order the
+ * separate attendance-list PDF download is asked to print in (`downloadAttendanceList`'s
+ * `sortOrder`) — the two are independent, and a client-side sort of this table would diverge from
+ * it.
  */
 export function listRegistrations(
   examId: number,
@@ -719,13 +721,32 @@ export function getCompleteness(examId: number): Promise<CompletenessResult> {
 }
 
 /**
+ * The four printable orders the attendance-list panel offers, matching
+ * `AttendanceListSortOrder` in `app/reports/attendance_list.py` value-for-value. This governs
+ * only the *PDF's* row order — the on-page registrations table always mirrors the server's
+ * default (course, then Nachname) order regardless of what's selected here; see the comment on
+ * `listRegistrations` below.
+ */
+export type AttendanceListSortOrder =
+  | "course_nachname"
+  | "course_matrikelnummer"
+  | "nachname"
+  | "matrikelnummer";
+
+/**
  * `GET /exams/{id}/reports/attendance-list` — a PDF (§6), not JSON, so this bypasses `request()`
  * entirely and reads the body as a `Blob`. The filename comes from the response's
  * `Content-Disposition` header (`attachment; filename="..."; filename*=UTF-8''...`); the RFC
  * 5987 `filename*` part is preferred since it carries German characters correctly.
  */
-export function downloadAttendanceList(examId: number): Promise<DownloadedFile> {
-  return downloadPdf(`/exams/${examId}/reports/attendance-list`, "anwesenheitsliste.pdf");
+export function downloadAttendanceList(
+  examId: number,
+  sortOrder: AttendanceListSortOrder,
+): Promise<DownloadedFile> {
+  return downloadPdf(
+    `/exams/${examId}/reports/attendance-list?sort_order=${sortOrder}`,
+    "anwesenheitsliste.pdf",
+  );
 }
 
 /** The media type Excel report routes declare via `Accept` and receive back as `Content-Type`. */

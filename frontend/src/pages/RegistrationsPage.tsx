@@ -23,6 +23,7 @@ import {
   importRegistrations,
   listRegistrations,
   updateRegistration,
+  type AttendanceListSortOrder,
   type DuplicateMatrikelnummer,
   type ExamDetail,
   type RegistrationHeadCount,
@@ -81,6 +82,15 @@ function toEditForm(row: RegistrationOut): EditForm {
   };
 }
 
+/** The four sort orders offered for the attendance-list PDF, in the order shown to the
+ * instructor. `"course_nachname"` is §6's default (course, then Nachname). */
+const ATTENDANCE_SORT_OPTIONS: { value: AttendanceListSortOrder; label: string }[] = [
+  { value: "nachname", label: "Nachname" },
+  { value: "matrikelnummer", label: "Matrikelnummer" },
+  { value: "course_nachname", label: "Studiengang, dann Nachname" },
+  { value: "course_matrikelnummer", label: "Studiengang, dann Matrikelnummer" },
+];
+
 export default function RegistrationsPage(): JSX.Element {
   const params = useParams();
   const examId = parseRouteId(params["examId"]);
@@ -129,6 +139,8 @@ export default function RegistrationsPage(): JSX.Element {
 
   const [downloading, setDownloading] = useState(false);
   const [downloadMessages, setDownloadMessages] = useState<string[]>([]);
+  const [attendanceSortOrder, setAttendanceSortOrder] =
+    useState<AttendanceListSortOrder>("course_nachname");
 
   const reloadExam = useCallback(async () => {
     if (examId === null) return;
@@ -176,8 +188,9 @@ export default function RegistrationsPage(): JSX.Element {
   );
 
   // Never re-sorted here: the server already returns German-collated (course, Nachname,
-  // Vorname) order (§6), which is also the order the attendance-list PDF uses — a client-side
-  // sort (e.g. by Matr.-Nr.) would diverge from that authoritative ordering and mislead.
+  // Vorname) order (§6's default) — a client-side sort (e.g. by Matr.-Nr.) would diverge from
+  // it and mislead. The attendance-list PDF's own sort order is chosen independently below, via
+  // the radio buttons next to its download button.
   const visibleRegistrations = registrations.filter(
     (row) =>
       (courseFilter === "" || row.course_code === courseFilter) && (showExcluded || !row.excluded),
@@ -371,7 +384,7 @@ export default function RegistrationsPage(): JSX.Element {
     setDownloading(true);
     setDownloadMessages([]);
     try {
-      const { blob, filename } = await downloadAttendanceList(examId);
+      const { blob, filename } = await downloadAttendanceList(examId, attendanceSortOrder);
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
@@ -568,6 +581,28 @@ export default function RegistrationsPage(): JSX.Element {
         <p className="small muted">
           Zum Ausdrucken und handschriftlichen Abhaken der Anwesenheit vor der Klausur.
         </p>
+        <fieldset style={{ border: "none", padding: 0, margin: "0 0 0.75rem" }}>
+          <legend className="small muted" style={{ padding: 0 }}>
+            Sortierung
+          </legend>
+          {ATTENDANCE_SORT_OPTIONS.map((option) => (
+            <label
+              key={option.value}
+              htmlFor={`attendance-sort-${option.value}`}
+              style={{ display: "block" }}
+            >
+              <input
+                id={`attendance-sort-${option.value}`}
+                type="radio"
+                name="attendance-sort-order"
+                value={option.value}
+                checked={attendanceSortOrder === option.value}
+                onChange={() => setAttendanceSortOrder(option.value)}
+              />{" "}
+              {option.label}
+            </label>
+          ))}
+        </fieldset>
         <button
           type="button"
           onClick={() => void onDownloadAttendanceList()}
