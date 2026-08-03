@@ -18,13 +18,16 @@ from pathlib import Path
 
 import pytest
 from alembic.autogenerate import compare_metadata
+from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
-from sqlalchemy import create_engine
+from alembic.script import ScriptDirectory
+from sqlalchemy import create_engine, insert, select
 
 from app import models  # noqa: F401  (registers every mapper on Base.metadata)
 from app.config import get_settings
-from app.db import Base
-from app.migrations import run_migrations
+from app.db import Base, create_engine_for, init_db
+from app.migrations import _ALEMBIC_INI, run_migrations
+from app.models import User
 
 
 @pytest.fixture
@@ -81,3 +84,54 @@ def test_migration_history_matches_current_models(migrated_db_url: str) -> None:
 def test_run_migrations_is_idempotent(migrated_db_url: str) -> None:
     """Running migrations again against an already up-to-date database is a no-op, not an error."""
     run_migrations()
+
+
+def test_run_migrations_adopts_a_pre_alembic_database_via_stamp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A database built by ``create_all`` before Alembic existed must be *stamped*, not replayed.
+
+    Every developer's pre-existing local ``backend/data/gradinghelper.db`` is exactly this case:
+    full schema, no ``alembic_version`` row. Replaying the initial migration's ``CREATE TABLE``
+    statements against it fails with "table already exists" — this is what actually happened the
+    first time this shipped, killing a running dev server's reload worker. This test builds that
+    exact starting state (schema via ``init_db``/``create_all``, pre-existing data, no Alembic
+    involvement at all) and asserts ``run_migrations()`` both succeeds and leaves the data alone.
+    """
+    url = f"sqlite:///{tmp_path / 'legacy.db'}"
+    engine = create_engine_for(url)
+    try:
+        init_db(engine)
+        with engine.connect() as connection:
+            tables = (
+                connection.exec_driver_sql("SELECT name FROM sqlite_master WHERE type='table'")
+                .scalars()
+                .all()
+            )
+            assert "alembic_version" not in tables
+        with engine.begin() as connection:
+            connection.execute(
+                insert(User).values(username="dozentin", password_hash="not-a-real-hash")
+            )
+    finally:
+        engine.dispose()
+
+    monkeypatch.setenv("GRADINGHELPER_DATABASE_URL", url)
+    get_settings.cache_clear()
+    try:
+        run_migrations()
+    finally:
+        get_settings.cache_clear()
+
+    head = ScriptDirectory.from_config(Config(str(_ALEMBIC_INI))).get_current_head()
+    check_engine = create_engine(url)
+    try:
+        with check_engine.connect() as connection:
+            stamped = MigrationContext.configure(connection).get_current_revision()
+            with check_engine.begin() as bound:
+                usernames = bound.execute(select(User.username)).scalars().all()
+    finally:
+        check_engine.dispose()
+
+    assert stamped == head
+    assert usernames == ["dozentin"]
