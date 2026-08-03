@@ -31,6 +31,23 @@ running container makes no outbound calls at all; a report render or PDF import 
 machine, by design (§13's actual concern is that exam data — names, Matrikelnummern — is never
 sent anywhere).
 
+**Alternative: pull the CI-built image instead of building locally.**
+`.github/workflows/ci.yml` builds this same `deploy/Dockerfile` and pushes it to GitHub Container
+Registry on every push to `main` (tag `latest`) and on `vX.Y.Z` tags (tags `X.Y.Z`/`X.Y`), once
+the backend and frontend test jobs pass. Pull the image the deployment host will run instead of
+building it there:
+
+```
+docker pull ghcr.io/buchbergerd/grading-helper:latest
+```
+
+If `ghcr.io/buchbergerd/grading-helper` is private (the default for a private source repo), the
+deployment host needs `docker login ghcr.io` first with a PAT (or fine-grained token) that has
+`read:packages` — see GitHub's [container registry
+docs](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry).
+Point `deploy/docker-compose.yml`'s `image:` at this tag (and drop or comment out its `build:`
+block) to run the pulled image instead of building one on the host.
+
 ## 3. Configure
 
 Open `deploy/docker-compose.yml` and check two things before first boot:
