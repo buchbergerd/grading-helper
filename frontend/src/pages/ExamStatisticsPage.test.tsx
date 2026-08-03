@@ -331,7 +331,7 @@ describe("ExamStatisticsPage — Kennzahlen and rates", () => {
     expect(screen.getByTestId("kpi-graded").textContent).toContain("33");
     expect(screen.getByTestId("kpi-incomplete").textContent).toContain("2");
 
-    // formatPercent inserts a non-breaking space before "%" (util/format.ts) —  , not " ".
+    // formatPercent inserts a non-breaking space (U+00A0) before "%" (util/format.ts), not " ".
     expect(screen.getByTestId("rate-attendance").textContent).toContain("89,7 % (35 von 39)");
     expect(screen.getByTestId("rate-passing").textContent).toContain("84,8 % (28 von 33)");
     expect(screen.getByTestId("rate-failure").textContent).toContain("15,2 % (5 von 33)");

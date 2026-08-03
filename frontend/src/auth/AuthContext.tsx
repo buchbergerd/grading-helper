@@ -38,7 +38,6 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
       // about it here either, so we still fall back to "logged out" and let the login page
       // report the next failure.
       if (!(error instanceof ApiError) || !error.isUnauthorized) {
-        // eslint-disable-next-line no-console
         console.warn("Sitzungsstatus konnte nicht geprüft werden", error);
       }
       setUser(null);
