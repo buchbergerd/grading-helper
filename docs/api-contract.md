@@ -286,8 +286,18 @@ plausible-looking string instead of failing).
 
 Top level: `exam_id`, `lecture_name`, `semester`, `termin`, `exam_date` (`DD.MM.YYYY` or `null`),
 `generated_at` (`DD.MM.YYYY HH:MM`), `max_points`, `bonus_mode`, `grading_configured`,
-`passing_threshold`, `counts`, `rates`, `grade_distribution`, `total_points_histogram`,
-`exercise_histograms`, `versuch_breakdown`.
+`passing_threshold`, `passing_threshold_bin_index`, `counts`, `rates`, `grade_distribution`,
+`total_points_histogram`, `exercise_histograms`, `versuch_breakdown`.
+
+`passing_threshold_bin_index` is the index into `total_points_histogram.bins` of the bin
+`passing_threshold` falls in (`null` iff `passing_threshold` is `null`), computed once in
+`app/statistics.py` so neither renderer has to compare `passing_threshold` against bin edges
+itself — the PDF template in particular has no exact-decimal type, so that comparison would mean
+parsing a payload decimal to a binary float. It marks the bin's **left edge**, not an in-bin
+fractional offset: the threshold can land on a half point while a bin is a whole point wide, and
+interpolating within the bin would claim more precision than a 1-point bar shows. Both renderers
+use it only to draw a "passing starts here" marker on the total-points histogram; it has no
+meaning for `exercise_histograms`.
 
 Three rules the frontend depends on — all three exist so no renderer ever computes anything:
 

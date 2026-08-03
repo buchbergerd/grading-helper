@@ -179,6 +179,9 @@ def test_worked_example_always_bonus(session: Session, instructor_user: User) ->
 
     assert stats["grading_configured"] is True
     assert stats["passing_threshold"] == "30.0"
+    # bin_width defaults to 1.0, so a threshold that lands exactly on a bin edge (30.0) indexes
+    # the bin whose lower edge *is* that value — bin 30 covers [30;31[.
+    assert stats["passing_threshold_bin_index"] == 30
     assert stats["counts"]["registered"] == 4
     assert stats["counts"]["attended"] == 3
     assert stats["counts"]["not_attended"] == 1
@@ -246,6 +249,45 @@ def test_worked_example_only_if_passing_without_bonus(
     numeric = {row["grade"]: row["count"] for row in stats["grade_distribution"]["numeric"]}
     assert numeric["3.7"] == 1
     assert sum(numeric.values()) == 1
+
+
+# --------------------------------------------------------------------------------------------
+# passing_threshold_bin_index — where to mark the passing line on the total-points histogram
+# --------------------------------------------------------------------------------------------
+
+
+def test_passing_threshold_bin_index_is_none_without_a_grading_schema(
+    session: Session, instructor_user: User
+) -> None:
+    exam = _make_exam(session, instructor_user, exercises=[("Aufgabe 1", Decimal(10))])
+
+    stats = build_exam_statistics(exam)
+
+    assert stats["passing_threshold"] is None
+    assert stats["passing_threshold_bin_index"] is None
+
+
+def test_passing_threshold_bin_index_lands_in_the_bin_a_half_point_threshold_falls_in(
+    session: Session, instructor_user: User
+) -> None:
+    """A half-point threshold (5.5, on an 11-point exam) still indexes a whole 1.0-wide bin — the
+    marker sits at that bin's *left* edge (5.0), not interpolated to 5.5 within it; see
+    ``ExamStatistics.passing_threshold_bin_index``'s docstring for why that is the honest choice
+    given a 1-point-wide bar.
+    """
+    exam = _make_exam(
+        session,
+        instructor_user,
+        exercises=[("Aufgabe 1", Decimal(11))],
+        grading_schema=WORKED_EXAMPLE_SCHEMA,
+    )
+
+    stats = build_exam_statistics(exam)
+
+    assert stats["passing_threshold"] == "5.5"
+    assert stats["passing_threshold_bin_index"] == 5
+    assert stats["total_points_histogram"]["bins"][5]["lower"] == "5.0"
+    assert stats["total_points_histogram"]["bins"][5]["upper"] == "6.0"
 
 
 # --------------------------------------------------------------------------------------------

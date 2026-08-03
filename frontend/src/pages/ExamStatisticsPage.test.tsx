@@ -76,7 +76,10 @@ const STATS: ExamStatistics = {
   max_points: "45.00",
   bonus_mode: "ALWAYS",
   grading_configured: true,
-  passing_threshold: "22.50",
+  passing_threshold: "11.5",
+  // Points at bins[1] below ("[11;12]") — the "charts actually render" suite checks the marker
+  // lands on that bar via its ReferenceLine, not by re-deriving the index from the threshold.
+  passing_threshold_bin_index: 1,
   counts: {
     registered: 39,
     excluded: 2,
@@ -184,6 +187,7 @@ const STATS_NO_SCHEMA: ExamStatistics = {
   ...STATS,
   grading_configured: false,
   passing_threshold: null,
+  passing_threshold_bin_index: null,
   grade_distribution: {
     ...STATS.grade_distribution,
     numeric: STATS.grade_distribution.numeric.map((entry) => ({ ...entry, count: 0 })),
@@ -203,6 +207,7 @@ const STATS_EMPTY: ExamStatistics = {
   max_points: "0",
   grading_configured: false,
   passing_threshold: null,
+  passing_threshold_bin_index: null,
   counts: {
     registered: 0,
     excluded: 0,
@@ -349,8 +354,10 @@ describe("ExamStatisticsPage — Kennzahlen and rates", () => {
     expect(screen.getByTestId("grade-row-nicht bestanden").textContent).toContain("5");
     expect(screen.getByTestId("grade-row-n.e.").textContent).toContain("2");
 
-    expect(screen.getByTestId("total-points-histogram-row-0").textContent).toContain("[10;11[");
-    expect(screen.getByTestId("total-points-histogram-row-0").textContent).toContain("1");
+    // The total-points table reads "left is good" too, in step with the chart above it
+    // (`series.ts::descendingHistogramSeries`) — row 0 is the *highest* bin, not the lowest.
+    expect(screen.getByTestId("total-points-histogram-row-0").textContent).toContain("[11;12]");
+    expect(screen.getByTestId("total-points-histogram-row-0").textContent).toContain("2");
 
     expect(screen.getByTestId("exercise-histogram-0-row-0").textContent).toContain("[18;18,5]");
     expect(screen.getByTestId("exercise-histogram-1-row-0").textContent).toContain("[23,5;24]");
@@ -400,7 +407,7 @@ describe("ExamStatisticsPage — collapsed summary tables", () => {
       "total-points-histogram-table-details",
     ) as HTMLDetailsElement;
     expect(totalPointsDetails.open).toBe(true);
-    expect(screen.getByTestId("total-points-histogram-row-0").textContent).toContain("[10;11[");
+    expect(screen.getByTestId("total-points-histogram-row-0").textContent).toContain("[11;12]");
 
     const gradeDetails = screen.getByTestId("grade-distribution-table-details") as HTMLDetailsElement;
     expect(gradeDetails.open).toBe(false);
@@ -686,5 +693,32 @@ describe("ExamStatisticsPage — charts actually render", () => {
     const container = await renderCharts();
 
     expect(container.querySelectorAll(".recharts-rectangle").length).toBe(0);
+  });
+
+  it("marks the passing threshold on the total-points histogram only, not on exercise histograms", async () => {
+    installFetchMock(baseRoutes());
+    const container = await renderCharts();
+
+    // Exactly one dashed marker line, drawn only in the Gesamtpunkte chart — never on an
+    // exercise histogram, which has no notion of a single passing threshold.
+    const markers = container.querySelectorAll(".recharts-reference-line-line");
+    expect(markers.length).toBe(1);
+
+    expect(screen.getAllByText("Bestehensgrenze").length).toBeGreaterThan(0);
+    // The exact value survives as text too, not just the chart marker (print/screen readers).
+    const meta = screen.getByTestId("total-points-histogram-meta");
+    expect(meta.textContent).toContain("Bestehensgrenze: 11,5 Punkte");
+  });
+
+  it("draws no threshold marker when no grading schema is configured", async () => {
+    installFetchMock(
+      baseRoutes({
+        "/api/exams/7/statistics": () => jsonResponse(200, STATS_NO_SCHEMA),
+      }),
+    );
+    const container = await renderCharts();
+
+    expect(container.querySelectorAll(".recharts-reference-line-line").length).toBe(0);
+    expect(screen.queryByText("Bestehensgrenze")).toBeNull();
   });
 });

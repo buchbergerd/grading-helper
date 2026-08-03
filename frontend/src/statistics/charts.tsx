@@ -5,6 +5,7 @@ import {
   CartesianGrid,
   Cell,
   Legend,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -52,13 +53,27 @@ const TOOLTIP_STYLE = {
   color: "var(--fg)",
 };
 
-/** A single-series bar chart for one histogram (total points, or one exercise). */
+/**
+ * A single-series bar chart for one histogram (total points, or one exercise).
+ *
+ * `thresholdBinLabel` — the label of the bar the §9 passing threshold falls in
+ * (`series.ts::thresholdBinLabel`) — draws a dashed vertical marker, only ever passed for the
+ * total-points chart. That chart's `data` arrives *descending* (`series.ts::
+ * descendingHistogramSeries` — "left is good", user request 2026-08-03), so the marker is drawn
+ * at the marked bar's *right* edge (`position="end"`): with higher-value bars to the left,
+ * a bar's right-hand neighbour is always the next-*lower* bar, which is exactly where the bin's
+ * `lower` edge — the actual passing-threshold value — now sits. Left of the line passes, right of
+ * it fails. Mirrors the Typst PDF's `plot.add-vline(..., marker-position: "end")`, which reverses
+ * its bar order and flips the same edge for the same reason.
+ */
 export function HistogramChart({
   data,
   height = DEFAULT_HEIGHT,
+  thresholdBinLabel,
 }: {
   data: HistogramBarDatum[];
   height?: number;
+  thresholdBinLabel?: string | null;
 }): JSX.Element {
   return (
     <ResponsiveContainer width="100%" height={height}>
@@ -81,6 +96,21 @@ export function HistogramChart({
           radius={[3, 3, 0, 0]}
           isAnimationActive={ANIMATE}
         />
+        {thresholdBinLabel != null && (
+          <ReferenceLine
+            x={thresholdBinLabel}
+            position="end"
+            stroke="var(--fg)"
+            strokeWidth={1.5}
+            strokeDasharray="5 4"
+            label={{
+              value: "Bestehensgrenze",
+              position: "insideTopLeft",
+              fill: "var(--fg)",
+              fontSize: 11,
+            }}
+          />
+        )}
       </BarChart>
     </ResponsiveContainer>
   );

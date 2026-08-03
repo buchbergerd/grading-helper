@@ -264,6 +264,18 @@ class ExamStatistics(TypedDict):
     #: The §7.2 4.0 point threshold every pass/fail decision here was made against, or ``None``
     #: when ``grading_configured`` is ``False``.
     passing_threshold: str | None
+    #: Index into ``total_points_histogram["bins"]`` of the bin ``passing_threshold`` falls in —
+    #: computed here, once, so both renderers can mark it without independently comparing
+    #: ``passing_threshold`` against each bin's ``lower``/``upper`` themselves. That comparison
+    #: matters more than it looks: Typst has no arbitrary-precision decimal type, so doing it in
+    #: the template would mean parsing a payload decimal to a binary float, exactly the door §7.0
+    #: closes everywhere else. ``None`` iff ``passing_threshold`` is ``None``. Deliberately just an
+    #: index, not a fractional in-bin offset: the passing threshold can land on a half point while
+    #: a bin is a whole point wide, and a marker interpolated to that exact position would imply
+    #: more precision than a 1-point-wide bar can actually show. The mark sits at the bin's left
+    #: edge — "this bar and everything right of it passes" — which both renderers can draw from
+    #: this integer alone, no further decimal comparison needed.
+    passing_threshold_bin_index: int | None
     counts: StatisticsCounts
     rates: StatisticsRates
     grade_distribution: GradeDistribution
@@ -792,8 +804,20 @@ def build_exam_statistics(
     versuch_breakdown = _versuch_breakdown(outcomes)
 
     passing_threshold: str | None = None
+    passing_threshold_bin_index: int | None = None
     if thresholds is not None:
-        passing_threshold = _canonical(passing_threshold_points(thresholds, max_points))
+        threshold_points = passing_threshold_points(thresholds, max_points)
+        passing_threshold = _canonical(threshold_points)
+        total_bins = total_points_histogram["bins"]
+        if total_bins:
+            # Same clamped floor-division the histogram itself uses to bin an observed value
+            # (`_build_histogram` above) — a threshold below 0 or at/above the plotted range
+            # lands in the first/last bin rather than out of bounds.
+            clamped = threshold_points if threshold_points >= 0 else Decimal(0)
+            index = int(
+                (clamped / total_points_bin_width).to_integral_value(rounding=ROUND_FLOOR)
+            )
+            passing_threshold_bin_index = max(0, min(index, len(total_bins) - 1))
 
     return ExamStatistics(
         exam_id=exam.id,
@@ -806,6 +830,7 @@ def build_exam_statistics(
         bonus_mode=exam.bonus_mode.value,
         grading_configured=thresholds is not None,
         passing_threshold=passing_threshold,
+        passing_threshold_bin_index=passing_threshold_bin_index,
         counts=counts,
         rates=rates,
         grade_distribution=grade_distribution,

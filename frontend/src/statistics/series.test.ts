@@ -8,10 +8,12 @@ import type {
   VersuchGroup,
 } from "../api/client";
 import {
+  descendingHistogramSeries,
   formatRate,
   gradeDistributionSeries,
   gradingProgressBanner,
   histogramSeries,
+  thresholdBinLabel,
   versuchSeries,
 } from "./series";
 
@@ -67,6 +69,87 @@ describe("histogramSeries", () => {
     expect(series).toHaveLength(40);
     expect(series[0]).toEqual({ label: "[0;1[", count: 0 });
     expect(series[39]).toEqual({ label: "[39;40]", count: 39 % 3 });
+  });
+});
+
+/* --------------------------------------------------------------- descendingHistogramSeries */
+
+describe("descendingHistogramSeries", () => {
+  it("returns histogramSeries reversed — highest bin first", () => {
+    const histogram: Histogram = {
+      title: "Gesamtpunkte",
+      bin_width: "1.0",
+      reference_max: "20.00",
+      max_observed: "19.00",
+      included_count: 6,
+      bins: [
+        { lower: "10.0", upper: "11.0", label: "[10;11[", count: 1 },
+        { lower: "11.0", upper: "12.0", label: "[11;12[", count: 2 },
+        { lower: "12.0", upper: "13.0", label: "[12;13]", count: 3 },
+      ],
+    };
+    expect(descendingHistogramSeries(histogram)).toEqual([
+      { label: "[12;13]", count: 3 },
+      { label: "[11;12[", count: 2 },
+      { label: "[10;11[", count: 1 },
+    ]);
+  });
+
+  it("does not mutate the histogram it was given", () => {
+    const histogram: Histogram = {
+      title: "Gesamtpunkte",
+      bin_width: "1.0",
+      reference_max: "10.00",
+      max_observed: "9.00",
+      included_count: 1,
+      bins: [
+        { lower: "0.0", upper: "1.0", label: "[0;1[", count: 1 },
+        { lower: "1.0", upper: "2.0", label: "[1;2]", count: 0 },
+      ],
+    };
+    descendingHistogramSeries(histogram);
+    expect(histogram.bins.map((bin) => bin.label)).toEqual(["[0;1[", "[1;2]"]);
+  });
+
+  it("returns an empty array for an empty histogram", () => {
+    const histogram: Histogram = {
+      title: "Gesamtpunkte",
+      bin_width: "1.0",
+      reference_max: "0",
+      max_observed: null,
+      included_count: 0,
+      bins: [],
+    };
+    expect(descendingHistogramSeries(histogram)).toEqual([]);
+  });
+});
+
+/* ------------------------------------------------------------------------- thresholdBinLabel */
+
+describe("thresholdBinLabel", () => {
+  const histogram: Histogram = {
+    title: "Gesamtpunkte",
+    bin_width: "1.0",
+    reference_max: "20.00",
+    max_observed: "19.00",
+    included_count: 5,
+    bins: [
+      { lower: "10.0", upper: "11.0", label: "[10;11[", count: 1 },
+      { lower: "11.0", upper: "12.0", label: "[11;12]", count: 2 },
+    ],
+  };
+
+  it("returns null when there is no threshold index (no grading schema configured)", () => {
+    expect(thresholdBinLabel(histogram, null)).toBeNull();
+  });
+
+  it("returns the label of the bin at the given index", () => {
+    expect(thresholdBinLabel(histogram, 0)).toBe("[10;11[");
+    expect(thresholdBinLabel(histogram, 1)).toBe("[11;12]");
+  });
+
+  it("returns null for an index outside the bins actually sent (defensive, not expected)", () => {
+    expect(thresholdBinLabel(histogram, 5)).toBeNull();
   });
 });
 

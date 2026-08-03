@@ -959,6 +959,14 @@ export interface ExamStatistics {
   grading_configured: boolean;
   /** DECIMAL — string, or `null` when `grading_configured` is `false`. */
   passing_threshold: string | null;
+  /**
+   * Index into `total_points_histogram.bins` of the bin `passing_threshold` falls in, or `null`
+   * iff `passing_threshold` is `null`. Computed once in `app/statistics.py` so this frontend never
+   * has to compare `passing_threshold` against a bin's `lower`/`upper` itself — marks the bin's
+   * *left edge*, not an interpolated position within it (the threshold can land on a half point
+   * while a bin is a whole point wide). Meaningful only for `total_points_histogram`.
+   */
+  passing_threshold_bin_index: number | null;
   counts: StatisticsCounts;
   rates: StatisticsRates;
   grade_distribution: GradeDistribution;

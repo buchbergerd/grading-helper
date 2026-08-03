@@ -39,6 +39,16 @@ export function histogramSeries(histogram: Histogram): HistogramBarDatum[] {
   return histogram.bins.map((bin) => ({ label: bin.label, count: bin.count }));
 }
 
+/**
+ * `histogramSeries`, reversed — every points histogram on this page (total, and each exercise)
+ * reads "left is good" (user request, 2026-08-03): highest score first, descending to 0, unlike
+ * the grade-distribution and Versuch bar charts, which stay in their natural best-to-worst /
+ * ascending-attempt-number order.
+ */
+export function descendingHistogramSeries(histogram: Histogram): HistogramBarDatum[] {
+  return histogramSeries(histogram).reverse();
+}
+
 /** Which visual treatment a grade-distribution bar gets — a numeric grade uses the accent
  * colour, "nicht bestanden"/"n.e." use the danger/muted tones (never the same as a real grade,
  * so a failing bar can never be mistaken for a low-but-passing one at a glance). */
@@ -138,19 +148,42 @@ export function gradingProgressBanner(
  * grouping of the functions above. */
 export interface StatisticsSeries {
   gradeDistribution: GradeBarDatum[];
+  /** Descending — see `descendingHistogramSeries`. */
   totalPointsHistogram: HistogramBarDatum[];
+  /** Which bar of `totalPointsHistogram` to mark as the §9 passing threshold, by its `label` —
+   * a Recharts `ReferenceLine`'s `x` wants the category value, not a raw index, and a label
+   * lookup is order-independent so this is unaffected by `totalPointsHistogram` being descending.
+   * `null` when `passing_threshold_bin_index` is `null` (no grading schema) or the index falls
+   * outside the bars this payload actually sent (defensive; not expected). */
+  totalPointsThresholdBinLabel: string | null;
+  /** Also descending (user request, 2026-08-03: every points histogram on this page reads "left
+   * is good", not just the total) — same `descendingHistogramSeries` as `totalPointsHistogram`. */
   exerciseHistograms: { title: string; bars: HistogramBarDatum[] }[];
   versuch: VersuchBarDatum[];
   banner: GradingProgressBanner;
 }
 
+/**
+ * `passing_threshold_bin_index` -> the label of that bin in `histogram.bins`, or `null`. A thin
+ * lookup, not a decimal comparison — the index was already computed exactly in
+ * `app/statistics.py` (see its docstring for why that comparison does not belong in a renderer).
+ */
+export function thresholdBinLabel(histogram: Histogram, binIndex: number | null): string | null {
+  if (binIndex === null) return null;
+  return histogram.bins[binIndex]?.label ?? null;
+}
+
 export function buildStatisticsSeries(stats: ExamStatistics): StatisticsSeries {
   return {
     gradeDistribution: gradeDistributionSeries(stats.grade_distribution),
-    totalPointsHistogram: histogramSeries(stats.total_points_histogram),
+    totalPointsHistogram: descendingHistogramSeries(stats.total_points_histogram),
+    totalPointsThresholdBinLabel: thresholdBinLabel(
+      stats.total_points_histogram,
+      stats.passing_threshold_bin_index,
+    ),
     exerciseHistograms: stats.exercise_histograms.map((histogram) => ({
       title: histogram.title,
-      bars: histogramSeries(histogram),
+      bars: descendingHistogramSeries(histogram),
     })),
     versuch: versuchSeries(stats.versuch_breakdown),
     banner: gradingProgressBanner(stats.counts, stats.grading_configured),

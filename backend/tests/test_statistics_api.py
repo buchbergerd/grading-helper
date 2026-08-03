@@ -274,6 +274,16 @@ def test_pdf_and_json_report_the_same_numbers(
     assert bins[0]["label"] in text
     assert bins[-1]["label"] in text
 
+    # The passing-threshold marker (bin_index) is drawn only in the total-points chart, not
+    # printed as its own number — the PDF's only textual trace of it is the "Bestehensgrenze"
+    # note, built from `passing_threshold` itself. Asserting it here ties that note back to the
+    # same JSON value the dashboard's marker is positioned from.
+    assert stats["passing_threshold"] is not None, "fixture should have a configured schema"
+    assert stats["passing_threshold_bin_index"] is not None
+    assert f"Bestehensgrenze: {german(stats['passing_threshold'])} Punkte" in text.replace(
+        "\n", " "
+    )
+
 
 def test_counts_partition_the_registered_students(
     instructor_client: TestClient, populated_exam: int

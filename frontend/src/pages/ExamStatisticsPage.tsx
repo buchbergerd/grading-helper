@@ -429,6 +429,8 @@ export default function ExamStatisticsPage(): JSX.Element {
         maxObserved={stats.total_points_histogram.max_observed}
         includedCount={stats.total_points_histogram.included_count}
         bars={series.totalPointsHistogram}
+        thresholdBinLabel={series.totalPointsThresholdBinLabel}
+        passingThreshold={stats.passing_threshold}
         testIdPrefix="total-points-histogram"
       />
 
@@ -514,12 +516,19 @@ function HistogramSection({
   maxObserved,
   includedCount,
   bars,
+  thresholdBinLabel = null,
+  passingThreshold = null,
   testIdPrefix,
 }: {
   title: string;
   maxObserved: string | null;
   includedCount: number;
   bars: HistogramBarDatum[];
+  /** Only set for the total-points histogram — see `series.ts::thresholdBinLabel`. */
+  thresholdBinLabel?: string | null;
+  /** The §9 passing threshold itself, shown as text alongside the chart's dashed marker line so
+   * the exact value survives even where the chart isn't rendered (print, screen readers). */
+  passingThreshold?: string | null;
   testIdPrefix: string;
 }): JSX.Element {
   return (
@@ -530,12 +539,17 @@ function HistogramSection({
           ? "1 Studierende bzw. Studierender berücksichtigt"
           : `${includedCount} Studierende berücksichtigt`}
         {" — "}höchster beobachteter Wert: {formatDecimalOrDash(maxObserved)}
+        {passingThreshold !== null && (
+          <>
+            {" — "}Bestehensgrenze: {formatDecimalOrDash(passingThreshold)} Punkte
+          </>
+        )}
       </p>
       {bars.length === 0 ? (
         <p className="muted">Noch keine Daten.</p>
       ) : (
         <>
-          <HistogramChart data={bars} />
+          <HistogramChart data={bars} thresholdBinLabel={thresholdBinLabel} />
           <details className="chart-table-details" data-testid={`${testIdPrefix}-table-details`}>
             <summary>Werte als Tabelle anzeigen</summary>
             <table>

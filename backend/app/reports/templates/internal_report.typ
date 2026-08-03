@@ -167,7 +167,32 @@
 // break sensibly" requirement hold for a chart that doesn't fit in the remaining space. The
 // *heading* above a chart is bundled into this same non-breakable unit by `chart-section` below,
 // not by this function — a heading is never orphaned from the chart it names.
-#let bar-chart(title: "", entries: (), note: none, color: accent) = block(
+//
+// `marker-bin-index`/`marker-label`/`marker-position`: an optional dashed vertical line at one
+// bar's edge, used only by the total-points chart to mark §9's passing threshold.
+// `marker-bin-index` is an index into `entries` (already-computed, see app/statistics.py's
+// `passing_threshold_bin_index` docstring) — never a payload decimal compared against a bin edge
+// here, which this template's header comment forbids and Typst has no exact type for anyway.
+// Drawn at a bin *edge* rather than interpolated within it, for the same "don't imply more
+// precision than a 1-point bar shows" reason `passing_threshold_bin_index` itself is index-only.
+//
+// `marker-position` picks which edge: `"start"` (the default) is the edge bordering the
+// *previous* entry in `entries`, `"end"` the edge bordering the *next* one — plain array-order
+// geometry, not a value comparison. For an ascending `entries` array, `"start"` is a bin's
+// numerically lower edge. The total-points chart is the only caller that ever passes
+// `marker-bin-index` (no other chart has a threshold to mark), and it passes its `entries`
+// *reversed* ("left is good" — see that call site below) specifically so a bin's lower edge
+// becomes its *right*-hand neighbour, which is why that call site also passes
+// `marker-position: "end"`.
+#let bar-chart(
+  title: "",
+  entries: (),
+  note: none,
+  color: accent,
+  marker-bin-index: none,
+  marker-label: none,
+  marker-position: "start",
+) = block(
   width: 100%,
   below: 6pt,
   breakable: false,
@@ -245,9 +270,30 @@
           for (bar-color, pairs) in groups {
             plot.add-bar(pairs, bar-width: 0.85, style: (fill: bar-color, stroke: none))
           }
+          if marker-bin-index != none {
+            // Bars sit at positions `first-position + index`, each 1 unit wide — half a unit
+            // either side of centre gets the edge bordering the previous ("start") or next
+            // ("end") entry in `entries`. Pure array-order geometry off an already-computed
+            // integer, not a comparison of two payload numbers (see this function's own
+            // docstring above for why `marker-position` picks the edge instead of this always
+            // being "start").
+            let edge-offset = if marker-position == "end" { 0.5 } else { -0.5 }
+            plot.add-vline(
+              marker-bin-index + first-position + edge-offset,
+              style: (stroke: (paint: black, thickness: 1pt, dash: "dashed")),
+            )
+          }
         },
       )
     })
+    if marker-bin-index != none and marker-label != none [
+      #v(2pt)
+      #text(size: 8pt)[
+        #box[#line(length: 12pt, stroke: (paint: black, thickness: 1pt, dash: "dashed"))]
+        #h(4pt)
+        #marker-label
+      ]
+    ]
   }
   #if note != none [
     #v(4pt)
@@ -442,12 +488,33 @@
 )
 
 // --- Histogramm der Gesamtpunkte -----------------------------------------------------------------
+// "Left is good" (user request, 2026-08-03): every points histogram on this page plots its bins
+// highest-first — the exam's max points on the left, descending to 0 on the right (the
+// Notenverteilung and Bestehensquote-nach-Versuch charts are unaffected; only the point
+// histograms read this way). `total-hist.bins` itself is untouched (still §9's ascending order,
+// as the JSON payload always sends it); only the array handed to `bar-chart` is reversed, here,
+// at this call site. `passing_threshold_bin_index` is an index into the *original* (ascending)
+// `total-hist.bins`, so it has to be re-expressed as an index into the reversed array before
+// `bar-chart` can use it — plain `len - 1 - index` array-position algebra, not a re-derivation of
+// *which* bin the threshold falls in (that stays exactly what app/statistics.py computed). The
+// per-exercise charts below reverse their `entries` the same way, but carry no marker to remap.
 #let total-hist = data.total_points_histogram
+#let total-hist-bins-desc = total-hist.bins.rev()
+#let total-hist-marker-index = if data.passing_threshold_bin_index == none {
+  none
+} else {
+  total-hist.bins.len() - 1 - data.passing_threshold_bin_index
+}
 #block(breakable: false)[
   = Histogramm der Gesamtpunkte
   #bar-chart(
     title: total-hist.title,
-    entries: total-hist.bins.map(b => (b.label, b.count)),
+    entries: total-hist-bins-desc.map(b => (b.label, b.count)),
+    marker-bin-index: total-hist-marker-index,
+    marker-position: "end",
+    marker-label: if data.passing_threshold_bin_index != none [
+      Bestehensgrenze: #de(data.passing_threshold) Punkte
+    ] else { none },
     note: [
       Bezugsgröße (max. Punktzahl): #de(total-hist.reference_max) ·
       höchster erfasster Wert: #if total-hist.max_observed == none { em-dash } else {
@@ -463,11 +530,17 @@
 // (see `bar-chart`'s own `breakable: false`). Only the *first* exercise's chart is additionally
 // bundled with the section heading itself — a second or third exercise never needs the heading
 // repeated, so nothing beyond the first would gain from being tied to it, and tying all of them
-// into one giant non-breakable unit would just force a single all-or-nothing block that is far
-// more likely to overflow a page than to ever help.
+// into one giant all-or-nothing block that is far more likely to overflow a page than to ever
+// help.
+//
+// "Left is good" (user request, 2026-08-03 — same reasoning as the total-points chart above):
+// `hist.bins` is reversed for `entries` the same way `total-hist-bins-desc` is, so every points
+// histogram on this page — total and per-exercise alike — reads highest-first, descending to 0.
+// No marker here (§9's passing threshold is a total-points concept only), so unlike the
+// total-points call site there is no index to remap.
 #let exercise-chart(hist) = bar-chart(
   title: hist.title,
-  entries: hist.bins.map(b => (b.label, b.count)),
+  entries: hist.bins.rev().map(b => (b.label, b.count)),
   note: [
     Bezugsgröße (max. Punktzahl): #de(hist.reference_max) ·
     höchster erfasster Wert: #if hist.max_observed == none { em-dash } else {

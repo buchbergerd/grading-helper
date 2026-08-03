@@ -133,6 +133,7 @@ def _full_payload() -> dict[str, Any]:
         "bonus_mode": "NONE",
         "grading_configured": True,
         "passing_threshold": "45.0",
+        "passing_threshold_bin_index": 2,
         "counts": {
             "registered": 39,
             "excluded": 1,
@@ -218,6 +219,7 @@ def _empty_payload() -> dict[str, Any]:
         "bonus_mode": "NONE",
         "grading_configured": False,
         "passing_threshold": None,
+        "passing_threshold_bin_index": None,
         "counts": empty_counts,
         "rates": {"attendance": empty_rate, "passing": empty_rate, "failure": empty_rate},
         "grade_distribution": {
@@ -403,10 +405,12 @@ def test_unconfigured_schema_message_appears_even_with_other_data_present() -> N
     data = _full_payload()
     data["grading_configured"] = False
     data["passing_threshold"] = None
+    data["passing_threshold_bin_index"] = None
 
     text = _pdf_text(render_internal_report(data))
 
     assert "Kein Notenschema konfiguriert" in text
+    assert "Bestehensgrenze" not in text
 
 
 # --------------------------------------------------------------------------------------------
