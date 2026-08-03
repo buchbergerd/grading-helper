@@ -1,6 +1,6 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes } from "react-router";
 
 import { AuthProvider, RequireAdmin, RequireAuth } from "./AuthContext";
 import { installFetchMock, jsonResponse } from "../test/mockFetch";

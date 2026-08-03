@@ -1,5 +1,5 @@
 import type { JSX } from "react";
-import { Link, NavLink, Outlet, Route, Routes, useNavigate } from "react-router-dom";
+import { Link, NavLink, Outlet, Route, Routes, useNavigate } from "react-router";
 
 import { RequireAdmin, RequireAuth, useAuth } from "./auth/AuthContext";
 import AdminUsersPage from "./pages/AdminUsersPage";

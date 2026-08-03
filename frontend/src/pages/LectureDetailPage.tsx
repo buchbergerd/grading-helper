@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent, type JSX } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams } from "react-router";
 
 import { createExam, errorMessages, getLecture, type LectureDetail } from "../api/client";
 import { BackButton } from "../components/BackButton";

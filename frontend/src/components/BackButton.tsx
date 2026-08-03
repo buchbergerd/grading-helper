@@ -1,5 +1,5 @@
 import type { JSX, MouseEvent } from "react";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 
 import { IconBack } from "./icons";
 

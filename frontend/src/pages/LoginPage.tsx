@@ -1,5 +1,5 @@
 import { useState, type FormEvent, type JSX } from "react";
-import { Navigate, useLocation, useNavigate } from "react-router-dom";
+import { Navigate, useLocation, useNavigate } from "react-router";
 
 import { errorMessages } from "../api/client";
 import { ErrorList } from "../components/Messages";

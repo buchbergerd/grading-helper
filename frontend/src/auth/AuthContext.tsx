@@ -8,7 +8,7 @@ import {
   type JSX,
   type ReactNode,
 } from "react";
-import { Navigate, useLocation } from "react-router-dom";
+import { Navigate, useLocation } from "react-router";
 
 import { ApiError, login as apiLogin, logout as apiLogout, me as apiMe, type User } from "../api/client";
 
