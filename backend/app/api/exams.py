@@ -168,6 +168,7 @@ def exam_detail(db: Session, exam: Exam, warning: RecomputationWarning | None = 
         registration_count=count_registrations(db, exam),
         total_max_points=total_max_points(exam),
         recomputation_warning=warning,
+        share_token=exam.share_token,
     )
 
 

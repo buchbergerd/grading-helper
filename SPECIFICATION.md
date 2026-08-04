@@ -66,6 +66,17 @@ specification is in English for the implementing developer/agent.
   "student report" PDF,
   distributed by the instructor through whatever channel is normal in the department (out of
   scope here).
+- A second, narrower exception (added post-milestone-6, user request): an instructor can generate
+  a **share link** for one exam's §9 statistics dashboard. Anyone holding the link can view that
+  exam's live aggregated statistics and use the "what if" bonus-points simulation, without an
+  account — but can reach nothing else: no student list, no points entry, no §10/§11 reports (those
+  carry names and Matrikelnummern; the §9 dashboard carries only aggregate counts, rates and
+  histograms — see §9's own note). The link is a random unguessable token stored on the exam
+  (`Exam.share_token`); revoking it, or generating a new one, immediately invalidates the old
+  value. This trades a small, accepted re-identification risk (a share link to a 3-student exam
+  effectively publishes those 3 students' individual grades within the distribution) for the
+  instructor's explicit, revocable choice to publish that aggregate — sharing is off by default
+  and opt-in per exam, and the instructor who turns it on controls when it stops.
 
 Passwords are stored using a modern salted hash (e.g. argon2 or bcrypt) — never plaintext.
 
@@ -407,11 +418,17 @@ are always consistent between them:
 - **Interactive online version**: the same statistics rendered as an interactive
   page/dashboard within the app itself (charting library in the React frontend, e.g.
   Chart.js/Recharts/Plotly — pick one during implementation), authenticated and visible only to
-  the exam's owner (and, per §3, not to admins by default). This is a live view over current
-  data, not a static export — it reflects entered points immediately, useful while grading is
-  still in progress.
+  the exam's owner (and, per §3, not to admins by default) — **or** to anyone holding that exam's
+  optional §3 share link, which unlocks this same read-only dashboard (including the bonus-points
+  simulation) without a session, and nothing else. This is a live view over current data, not a
+  static export — it reflects entered points immediately, useful while grading is still in
+  progress.
 
-Both are for internal use only — never handed to the examination office or students.
+Both are for internal use only — never handed to the examination office or students. The dashboard
+payload itself (`app/statistics.py::ExamStatistics`) carries no student names or Matrikelnummern —
+only aggregate counts, rates, distributions and histograms — which is what makes the §3 share link
+safe to hand out without a session: the worst it can expose is small-cohort re-identification
+within an aggregate, never a named record.
 
 ---
 

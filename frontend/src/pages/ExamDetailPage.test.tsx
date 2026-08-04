@@ -27,6 +27,7 @@ const EXAM: ExamDetail = {
   owner_id: 1,
   registration_count: 42,
   recomputation_warning: null,
+  share_token: null,
   exercises: [
     { id: 1, name: "Aufgabe 1", max_points: "12.50", position: 1 },
     { id: 2, name: "Aufgabe 2", max_points: "0.75", position: 2 },

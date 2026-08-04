@@ -56,6 +56,7 @@ const EXAM: ExamDetail = {
   owner_id: 1,
   registration_count: 39,
   recomputation_warning: null,
+  share_token: null,
   exercises: [],
   grading_schema: [],
 };
@@ -901,5 +902,116 @@ describe("ExamStatisticsPage — bonus-points simulation", () => {
 
     await user.click(screen.getByTestId("simulation-toggle"));
     expect(screen.getByTestId("simulation-bonus-mode-note")).not.toBeNull();
+  });
+});
+
+describe("ExamStatisticsPage — §3 share link", () => {
+  function stubClipboard(): ReturnType<typeof vi.fn> {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    return writeText;
+  }
+
+  it("shows only a create button while sharing is off", async () => {
+    renderPage();
+    await screen.findByTestId("share-link-panel");
+
+    expect(screen.getByRole("button", { name: "Link erstellen" })).not.toBeNull();
+    expect(screen.queryByTestId("share-link-value")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Link widerrufen" })).toBeNull();
+  });
+
+  it("creating a link shows its URL and the copy/regenerate/revoke buttons", async () => {
+    const user = userEvent.setup();
+    renderPage({
+      "/api/exams/7/share-link": (_url, init) => {
+        if (init?.method === "POST") {
+          return jsonResponse(200, { ...EXAM, share_token: "tok-1" });
+        }
+        throw new Error(`unexpected method ${String(init?.method)}`);
+      },
+    });
+    await screen.findByTestId("share-link-panel");
+
+    await user.click(screen.getByRole("button", { name: "Link erstellen" }));
+
+    const value = await screen.findByTestId("share-link-value");
+    expect(value.textContent).toBe("http://localhost:3000/geteilt/statistik/tok-1");
+    expect(screen.getByRole("button", { name: "Link kopieren" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Neuen Link erstellen" })).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Link widerrufen" })).not.toBeNull();
+    expect(screen.queryByRole("button", { name: "Link erstellen" })).toBeNull();
+  });
+
+  it("copying the link writes the full URL to the clipboard", async () => {
+    const user = userEvent.setup();
+    const writeText = stubClipboard();
+    renderPage({
+      "/api/exams/7": () => jsonResponse(200, { ...EXAM, share_token: "tok-2" }),
+    });
+    await screen.findByTestId("share-link-value");
+
+    await user.click(screen.getByRole("button", { name: "Link kopieren" }));
+
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith("http://localhost:3000/geteilt/statistik/tok-2");
+    });
+    expect(
+      screen.getByText("Der Link wurde in die Zwischenablage kopiert."),
+    ).not.toBeNull();
+  });
+
+  it("regenerating replaces the displayed link with the new token", async () => {
+    const user = userEvent.setup();
+    renderPage({
+      "/api/exams/7": () => jsonResponse(200, { ...EXAM, share_token: "tok-old" }),
+      "/api/exams/7/share-link": (_url, init) => {
+        if (init?.method === "POST") return jsonResponse(200, { ...EXAM, share_token: "tok-new" });
+        throw new Error(`unexpected method ${String(init?.method)}`);
+      },
+    });
+    await screen.findByTestId("share-link-value");
+    expect(screen.getByTestId("share-link-value").textContent).toContain("tok-old");
+
+    await user.click(screen.getByRole("button", { name: "Neuen Link erstellen" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("share-link-value").textContent).toContain("tok-new");
+    });
+  });
+
+  it("revoking removes the link and shows the create button again", async () => {
+    const user = userEvent.setup();
+    renderPage({
+      "/api/exams/7": () => jsonResponse(200, { ...EXAM, share_token: "tok-3" }),
+      "/api/exams/7/share-link": (_url, init) => {
+        if (init?.method === "DELETE") return jsonResponse(204, undefined);
+        throw new Error(`unexpected method ${String(init?.method)}`);
+      },
+    });
+    await screen.findByTestId("share-link-value");
+
+    await user.click(screen.getByRole("button", { name: "Link widerrufen" }));
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("share-link-value")).toBeNull();
+    });
+    expect(screen.getByRole("button", { name: "Link erstellen" })).not.toBeNull();
+    expect(screen.getByText("Der Link wurde widerrufen.")).not.toBeNull();
+  });
+
+  it("shows the server's error message when creating the link fails", async () => {
+    const user = userEvent.setup();
+    renderPage({
+      "/api/exams/7/share-link": () =>
+        jsonResponse(403, { detail: "Keine Berechtigung für diese Aktion." }),
+    });
+    await screen.findByTestId("share-link-panel");
+
+    await user.click(screen.getByRole("button", { name: "Link erstellen" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Keine Berechtigung für diese Aktion.")).not.toBeNull();
+    });
   });
 });

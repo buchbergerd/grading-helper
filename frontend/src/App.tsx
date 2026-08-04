@@ -13,6 +13,7 @@ import NotFoundPage from "./pages/NotFoundPage";
 import PointsEntryPage from "./pages/PointsEntryPage";
 import RegisterPage from "./pages/RegisterPage";
 import RegistrationsPage from "./pages/RegistrationsPage";
+import SharedStatisticsPage from "./pages/SharedStatisticsPage";
 
 function Layout(): JSX.Element {
   const { user, logout } = useAuth();
@@ -55,6 +56,8 @@ export default function App(): JSX.Element {
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
+      {/* §3's share-link exception: no session, so this stays outside <RequireAuth>/<Layout>. */}
+      <Route path="/geteilt/statistik/:token" element={<SharedStatisticsPage />} />
       <Route
         element={
           <RequireAuth>

@@ -89,7 +89,7 @@ reassignment silently break access control. Same `404`-not-`403` rule.
 
 Exam summary: `{id, lecture_id, lecture_name, semester, termin, exam_date, bonus_mode,
 bonus_points, owner_id}`. Exam detail additionally: `{exercises: [...], grading_schema: [...],
-registration_count, total_max_points, recomputation_warning}`.
+registration_count, total_max_points, recomputation_warning, share_token}`.
 
 - `exam_date`: `YYYY-MM-DD` or `null` on the wire (German `DD.MM.YYYY` formatting is a
   presentation concern — §14 #6 — applied in the UI and in reports, not in the API).
@@ -138,6 +138,8 @@ registration_count, total_max_points, recomputation_warning}`.
   of the three fields above only reflects the other field's effect, not the mode's.
 - `lecture_name` is a convenience copy of the parent lecture's name; it is never derived from a
   registration PDF (§4).
+- `share_token`: `string | null`, response-only. §3's second public-access exception — see the
+  dedicated "Statistics share links" section under §9 below for the routes that set it.
 
 | Method | Path | Body | Response |
 |---|---|---|---|
@@ -415,6 +417,28 @@ keyword arguments (`app/statistics.py`) can still override either independently 
 
 The full field-by-field contract with the reasoning behind each decision lives in
 `backend/app/statistics.py`'s TypedDicts; `frontend/src/api/client.ts` mirrors them.
+
+### Statistics share links (§3, §9) — added post-milestone-6
+
+§3's second public-access exception: an instructor can hand out a link that lets anyone view one
+exam's §9 statistics dashboard, read-only, without an account. Management is owner-scoped exactly
+like every other exam route (`404`, not `403`, for another instructor's exam); the one route that
+consumes the resulting token needs no session at all — nothing else in the app is reachable
+through it.
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| POST | `/api/exams/{id}/share-link` | — | `200` + `ExamDetail` (below), with a freshly minted `share_token`. Always mints a **new** token, replacing any existing one — the same route is both "turn sharing on" and "regenerate", and regenerating immediately invalidates the old value |
+| DELETE | `/api/exams/{id}/share-link` | — | `204` — turns sharing off (`share_token` becomes `null`). Idempotent: already-off still `204`s |
+| GET | `/api/public/statistics/{token}?bonus_points_override=<decimal>` | — | `200` + `ExamStatistics`, the exact same payload and `bonus_points_override` simulation as the authenticated `GET /api/exams/{id}/statistics` above, looked up by `share_token` instead of a session. `Cache-Control: no-store` (same reasoning as the internal-report PDF: a public URL is exactly what an intermediate cache would otherwise keep). Unauthenticated — no cookie required or read. `404` with `{"detail": "Dieser Link ist nicht mehr gültig."}` for an unknown, revoked or regenerated-away token — one message for every reason, same posture as the login/session-expiry error |
+
+`ExamDetail.share_token` (`string | null`) rides along on the existing owner-only
+`GET`/`POST`/`PATCH /api/exams/{id}` responses — `null` while sharing is off for that exam. It is
+not a secret from the exam's own owner, so there is no separate status endpoint.
+
+The public route's payload carries no student names or Matrikelnummern — see `ExamStatistics`
+above; it is the same aggregate-only shape either way. See `docs/open-questions.md` item 25 for
+the accepted small-cohort re-identification tradeoff this deliberately does not mitigate.
 
 ## Examination office report (§10) — milestone 5
 

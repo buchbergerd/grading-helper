@@ -23,6 +23,7 @@ const IMPORTED_EXAM: ExamDetail = {
   owner_id: 1,
   registration_count: 2,
   recomputation_warning: null,
+  share_token: null,
   exercises: [],
   grading_schema: [],
 };

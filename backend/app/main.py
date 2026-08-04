@@ -12,7 +12,17 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 
-from app.api import admin, auth, exams, lectures, points, registrations, reports, statistics
+from app.api import (
+    admin,
+    auth,
+    exams,
+    lectures,
+    points,
+    registrations,
+    reports,
+    sharing,
+    statistics,
+)
 from app.migrations import run_migrations
 
 
@@ -57,6 +67,10 @@ app.include_router(reports.router, prefix="/api")
 # The same §9 statistics as JSON for the live dashboard: ``/api/exams/{id}/statistics``. Separate
 # from the reports router, which serves only binary documents.
 app.include_router(statistics.router, prefix="/api")
+# §3's second public-access exception: owner-only share-link management
+# (``/api/exams/{id}/share-link``) plus the one unauthenticated route this app has besides
+# ``/health`` and auth, ``/api/public/statistics/{token}``.
+app.include_router(sharing.router, prefix="/api")
 
 
 # The built frontend (``npm run build``), copied to ``/app/static`` by ``deploy/Dockerfile`` so

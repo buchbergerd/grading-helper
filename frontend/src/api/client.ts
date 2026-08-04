@@ -97,6 +97,10 @@ export interface ExamDetail extends ExamSummary {
   grading_schema: GradingSchemaRow[];
   registration_count: number;
   recomputation_warning: RecomputationWarning | null;
+  /** §3's share-link exception (`app/api/sharing.py`): `null` while sharing is off for this
+   * exam, otherwise the opaque token that unlocks its read-only §9 statistics dashboard at
+   * `/geteilt/statistik/{token}` without a session. */
+  share_token: string | null;
 }
 
 /** Body for POST/PATCH on exams. Exercises/schema are a full replace, never a merge. */
@@ -393,6 +397,23 @@ export function updateExam(id: number, body: ExamWriteBody): Promise<ExamDetail>
 /** Destructive: cascades to registrations and points (§13); needs the same confirmation. */
 export function deleteExam(id: number): Promise<void> {
   return request<void>(`/exams/${id}?confirm=true`, { method: "DELETE" });
+}
+
+/* --------------------------------------------------------- statistics share links (§3, §9) */
+
+/**
+ * `POST /exams/{id}/share-link` — mints a new token, replacing any existing one, and returns the
+ * updated exam (`share_token` is the new value). Also what "regenerate" calls: there is no
+ * separate "keep the current one" mode, so a caller wanting to display an already-existing link
+ * should read it off `ExamDetail.share_token` instead of calling this again.
+ */
+export function createShareLink(examId: number): Promise<ExamDetail> {
+  return request<ExamDetail>(`/exams/${examId}/share-link`, { method: "POST" });
+}
+
+/** `DELETE /exams/{id}/share-link` — turns sharing off; idempotent. */
+export function revokeShareLink(examId: number): Promise<void> {
+  return request<void>(`/exams/${examId}/share-link`, { method: "DELETE" });
 }
 
 /* --------------------------------------------------- whole-exam export/import (backup/transfer,
@@ -1090,6 +1111,25 @@ export function getExamStatistics(
       ? ""
       : `?bonus_points_override=${encodeURIComponent(bonusPointsOverride)}`;
   return request<ExamStatistics>(`/exams/${examId}/statistics${query}`);
+}
+
+/**
+ * `GET /public/statistics/{token}` — the unauthenticated read behind a §3 share link
+ * (`app/api/sharing.py`). Same shape and same `bonusPointsOverride` simulation as
+ * `getExamStatistics`; the only difference is the exam is resolved by share token instead of a
+ * session, so this works with no cookie at all. A revoked or unknown token is a `404` with the
+ * German message "Dieser Link ist nicht mehr gültig." — `SharedStatisticsPage` shows it verbatim
+ * via `errorMessages`, same as any other `ApiError`.
+ */
+export function getSharedStatistics(
+  token: string,
+  bonusPointsOverride?: string,
+): Promise<ExamStatistics> {
+  const query =
+    bonusPointsOverride === undefined
+      ? ""
+      : `?bonus_points_override=${encodeURIComponent(bonusPointsOverride)}`;
+  return request<ExamStatistics>(`/public/statistics/${encodeURIComponent(token)}${query}`);
 }
 
 /** `GET /exams/{id}/reports/internal` — the same statistics as a PDF (§9). */

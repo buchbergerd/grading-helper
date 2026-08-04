@@ -314,6 +314,7 @@ def test_create_exam_returns_the_contract_shape(
         "registration_count",
         "total_max_points",
         "recomputation_warning",
+        "share_token",
     }
     assert body["exam_date"] == "2024-02-13"
     assert body["bonus_mode"] == "ONLY_IF_PASSING_WITHOUT_BONUS"

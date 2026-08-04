@@ -19,6 +19,7 @@ const EXAM: ExamDetail = {
   owner_id: 1,
   registration_count: 3,
   recomputation_warning: null,
+  share_token: null,
   exercises: [],
   grading_schema: [],
 };

@@ -62,6 +62,13 @@ class Exam(Base):
     # One amount for the whole exam (§7.3), applied identically to every non-excluded student —
     # not per student. DecimalText, never Numeric/Float — see app/types.py and §7.0.
     bonus_points: Mapped[Decimal] = mapped_column(DecimalText, default=Decimal(0), nullable=False)
+    # §3's second public-access exception (app/api/sharing.py): an owner-generated, revocable
+    # token that unlocks the read-only §9 statistics dashboard without a session. `None` means
+    # sharing is off (the default). Looked up directly by value, like `InvitationCode.code` and
+    # `UserSession.token` — not a relationship.
+    share_token: Mapped[str | None] = mapped_column(
+        String(64), unique=True, index=True, nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
     )

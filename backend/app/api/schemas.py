@@ -325,6 +325,11 @@ class ExamDetail(ExamSummary):
     #: Non-null only on the PATCH response, and only when the edit actually moved thresholds
     #: while student data exists (§8.1). Not in the original contract — see the report.
     recomputation_warning: RecomputationWarning | None = None
+    #: §3's second public-access exception (``app/api/sharing.py``). ``None`` when sharing is
+    #: off (the default) for this exam; otherwise the opaque token that unlocks its read-only §9
+    #: statistics dashboard without a session. Not a secret from the exam's own owner, so it rides
+    #: along on this owner-only response rather than needing its own status endpoint.
+    share_token: str | None = None
 
 
 class LectureSummary(BaseModel):
