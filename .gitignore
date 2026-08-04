@@ -60,3 +60,6 @@ test_data/*.pdf
 .env
 .env.*
 !.env.example
+
+.playwright-mcp/*
+
