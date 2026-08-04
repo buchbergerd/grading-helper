@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from pydantic import (
     BaseModel,
@@ -24,6 +24,17 @@ from pydantic import (
 )
 
 from app.models import BonusMode
+
+
+def _iso_utc(value: datetime) -> str:
+    """Render a datetime with an explicit UTC offset.
+
+    SQLite has no datetime type and hands back a naive value even though a
+    ``DateTime(timezone=True)`` column was written with an aware one; without this, a naive
+    ``2026-07-27T09:00:00`` would reach the frontend and get parsed as local time.
+    """
+    aware = value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+    return aware.isoformat()
 
 
 class UserIdentity(BaseModel):
@@ -48,14 +59,7 @@ class UserAccount(UserIdentity):
 
     @field_serializer("created_at")
     def _serialize_created_at(self, value: datetime) -> str:
-        """Always emit an explicit UTC offset.
-
-        SQLite has no datetime type and hands back a naive value even though a
-        ``DateTime(timezone=True)`` column was written with an aware one; without this the
-        frontend would receive a bare ``2026-07-27T09:00:00`` and parse it as local time.
-        """
-        aware = value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
-        return aware.isoformat()
+        return _iso_utc(value)
 
 
 class LoginRequest(BaseModel):
@@ -89,6 +93,44 @@ class PasswordResetRequest(BaseModel):
     """``POST /api/admin/users/{id}/password`` — admin reset, no current password needed."""
 
     new_password: str = Field(min_length=1)
+
+
+class InvitationOut(BaseModel):
+    """``POST``/``GET /api/admin/invitations`` — an admin-issued invitation code (§3).
+
+    A code is reusable: it is not consumed by redemption, only by expiry or revocation, so one
+    code can be shared with a whole team (e.g. posted in a group chat). ``status`` is computed at
+    response time, never stored: ``revoked`` (an admin cancelled it), ``expired`` (past
+    ``expires_at``) or ``active`` (still redeemable, any number of times).
+    ``redemption_count`` is how many accounts have been created with this code so far — with one
+    code shared broadly, the users list (and its ``created_at``) already tells you who, so this
+    is a count, not a roster. ``created_by`` is a username, not an id — the admin UI has no other
+    reason to look up a user record for this page.
+    """
+
+    id: int
+    code: str
+    created_at: datetime
+    expires_at: datetime
+    created_by: str
+    revoked_at: datetime | None
+    redemption_count: int
+    status: Literal["active", "expired", "revoked"]
+
+    @field_serializer("created_at", "expires_at", "revoked_at")
+    def _serialize_datetime(self, value: datetime | None) -> str | None:
+        return None if value is None else _iso_utc(value)
+
+
+class RegisterRequest(BaseModel):
+    """``POST /api/auth/register`` — self-service account creation via an invitation code (§3).
+
+    Always creates a non-admin instructor account; there is no ``is_admin`` field here.
+    """
+
+    code: str = Field(min_length=1)
+    username: str = Field(min_length=1, max_length=150)
+    password: str = Field(min_length=1)
 
 
 class ValidationErrors(BaseModel):
@@ -280,8 +322,7 @@ class LectureSummary(BaseModel):
 
     @field_serializer("created_at")
     def _serialize_created_at(self, value: datetime) -> str:
-        aware = value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
-        return aware.isoformat()
+        return _iso_utc(value)
 
 
 class LectureDetail(LectureSummary):

@@ -8,8 +8,9 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Response, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
-from app.api.schemas import LoginRequest, PasswordChangeRequest, UserIdentity
+from app.api.schemas import LoginRequest, PasswordChangeRequest, RegisterRequest, UserIdentity
 from app.auth.cookies import clear_session_cookie, set_session_cookie
 from app.auth.dependencies import CurrentSession, CurrentUser, DbSession, OptionalSession
 from app.auth.passwords import (
@@ -19,8 +20,9 @@ from app.auth.passwords import (
     validate_password_strength,
     verify_password,
 )
-from app.auth.sessions import create_session, delete_all_sessions_for_user, delete_session
-from app.models import User
+from app.auth.sessions import as_utc, create_session, delete_all_sessions_for_user, delete_session
+from app.models import InvitationCode, User
+from app.models.common import utcnow
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -29,6 +31,11 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 #: that a named colleague's account has been disabled.
 INVALID_CREDENTIALS_DETAIL = "Benutzername oder Passwort ist falsch."
 WRONG_CURRENT_PASSWORD_DETAIL = "Das aktuelle Passwort ist falsch."
+#: One message for "no such code", "expired" and "revoked" — same reasoning as above, and the
+#: code space is 256 bits of entropy (``INVITATION_CODE_BYTES``) so there is no realistic
+#: enumeration to protect against; this is just consistency, not a security control.
+INVALID_INVITATION_DETAIL = "Dieser Einladungscode ist ungültig, abgelaufen oder wurde widerrufen."
+USERNAME_TAKEN_DETAIL = "Dieser Benutzername ist bereits vergeben."
 
 
 @router.post("/login", response_model=UserIdentity)
@@ -57,6 +64,64 @@ def login(payload: LoginRequest, response: Response, db: DbSession) -> User:
     if needs_rehash(user.password_hash):
         user.password_hash = hash_password(payload.password)
         db.commit()
+
+    session = create_session(db, user)
+    set_session_cookie(response, session.token)
+    return user
+
+
+@router.post("/register", response_model=UserIdentity, status_code=status.HTTP_201_CREATED)
+def register(payload: RegisterRequest, response: Response, db: DbSession) -> User:
+    """Create an instructor account by redeeming an admin-issued invitation code (§3).
+
+    Besides ``/login``, the only unauthenticated route that *creates state* — ``/health`` and
+    ``/logout`` need no session either, but neither one ever writes a row. Deliberately narrow,
+    since §3's default is no public account creation. The invitation code is checked, in full,
+    **before** the username is looked at: reversing that order would turn this into a
+    username-existence oracle for anyone, code or not, which a colleague already holding a valid
+    code does not need.
+
+    A code is reusable — this route does not consume it, only increments its
+    ``redemption_count`` — so the same code can be redeemed by any number of colleagues until it
+    expires or an admin revokes it (e.g. one code posted in a group chat). The increment is a
+    SQL-side ``redemption_count + 1``, not a Python read-modify-write, so two concurrent
+    redemptions of the same code never lose a count.
+
+    Always creates a non-admin account; there is no way to request admin rights through a code.
+    """
+    invitation = db.execute(
+        select(InvitationCode).where(InvitationCode.code == payload.code)
+    ).scalar_one_or_none()
+
+    now = utcnow()
+    if (
+        invitation is None
+        or invitation.revoked_at is not None
+        or as_utc(invitation.expires_at) <= now
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=INVALID_INVITATION_DETAIL
+        )
+
+    errors = validate_password_strength(payload.password)
+    if errors:
+        raise HTTPException(status_code=422, detail={"errors": errors})
+
+    user = User(
+        username=payload.username,
+        password_hash=hash_password(payload.password),
+        is_admin=False,
+        is_active=True,
+    )
+    db.add(user)
+    invitation.redemption_count = InvitationCode.redemption_count + 1
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=USERNAME_TAKEN_DETAIL
+        ) from exc
 
     session = create_session(db, user)
     set_session_cookie(response, session.token)

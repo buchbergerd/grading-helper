@@ -21,6 +21,9 @@ DEFAULT_DATABASE_URL = "sqlite:///./data/gradinghelper.db"
 DEFAULT_SESSION_LIFETIME_HOURS = 24
 DEFAULT_SESSION_COOKIE_NAME = "gh_session"
 DEFAULT_COOKIE_SECURE = False
+#: How long an admin-issued invitation code (§3) stays redeemable. A pre-defined, configured
+#: lifetime rather than a per-invitation input — matches ``session_lifetime_hours`` below.
+DEFAULT_INVITATION_LIFETIME_DAYS = 7
 
 
 def _env_str(name: str, default: str) -> str:
@@ -58,6 +61,7 @@ class Settings:
     session_lifetime_hours: int = DEFAULT_SESSION_LIFETIME_HOURS
     session_cookie_name: str = DEFAULT_SESSION_COOKIE_NAME
     cookie_secure: bool = DEFAULT_COOKIE_SECURE
+    invitation_lifetime_days: int = DEFAULT_INVITATION_LIFETIME_DAYS
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -70,6 +74,9 @@ class Settings:
                 "GRADINGHELPER_SESSION_COOKIE_NAME", DEFAULT_SESSION_COOKIE_NAME
             ),
             cookie_secure=_env_bool("GRADINGHELPER_COOKIE_SECURE", DEFAULT_COOKIE_SECURE),
+            invitation_lifetime_days=_env_int(
+                "GRADINGHELPER_INVITATION_LIFETIME_DAYS", DEFAULT_INVITATION_LIFETIME_DAYS
+            ),
         )
 
 

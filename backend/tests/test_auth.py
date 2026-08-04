@@ -28,7 +28,7 @@ from app.auth.sessions import (
     get_valid_session,
     purge_expired_sessions,
 )
-from app.models import User, UserSession
+from app.models import InvitationCode, User, UserSession
 from app.models.common import utcnow
 from tests.conftest import ADMIN_PASSWORD, INSTRUCTOR_PASSWORD, ClientFactory, LoginHelper
 
@@ -450,3 +450,140 @@ def test_password_change_requires_authentication(client: TestClient) -> None:
         json={"current_password": ADMIN_PASSWORD, "new_password": "neues-passwort-2026"},
     )
     assert response.status_code == 401
+
+
+# --------------------------------------------------------------------------------------------
+# Self-service registration via an admin-issued invitation code (§3)
+# --------------------------------------------------------------------------------------------
+
+NEW_ACCOUNT_BODY = {"username": "neue-dozentin", "password": "ein-gutes-passwort-1"}
+
+
+@pytest.fixture
+def active_invitation(session: Session, admin_user: User) -> InvitationCode:
+    invitation = InvitationCode(
+        code="einladung-frisch",
+        created_by_id=admin_user.id,
+        created_at=utcnow(),
+        expires_at=utcnow() + timedelta(days=7),
+    )
+    session.add(invitation)
+    session.commit()
+    return invitation
+
+
+def test_register_creates_a_non_admin_account_and_logs_in(
+    client: TestClient, active_invitation: InvitationCode, cookie_name: str
+) -> None:
+    response = client.post(
+        "/api/auth/register", json={"code": active_invitation.code, **NEW_ACCOUNT_BODY}
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["username"] == "neue-dozentin"
+    assert body["is_admin"] is False
+    assert cookie_name in response.headers["set-cookie"]
+
+    me = client.get("/api/auth/me")
+    assert me.status_code == 200
+    assert me.json()["username"] == "neue-dozentin"
+
+
+def test_register_can_be_redeemed_more_than_once_and_counts_each_redemption(
+    client: TestClient,
+    client_factory: ClientFactory,
+    active_invitation: InvitationCode,
+    session: Session,
+) -> None:
+    """The point of a reusable code: one link, posted once, works for the whole team."""
+    first = client.post(
+        "/api/auth/register", json={"code": active_invitation.code, **NEW_ACCOUNT_BODY}
+    )
+    assert first.status_code == 201
+
+    second = client_factory().post(
+        "/api/auth/register",
+        json={"code": active_invitation.code, "username": "noch-eine", "password": "x" * 12},
+    )
+    assert second.status_code == 201
+    assert second.json()["id"] != first.json()["id"]
+
+    session.expire_all()
+    stored = session.get(InvitationCode, active_invitation.id)
+    assert stored is not None
+    assert stored.redemption_count == 2
+    assert stored.revoked_at is None, "redemption alone must never revoke a code"
+
+
+def test_register_with_unknown_code_returns_400(client: TestClient) -> None:
+    response = client.post("/api/auth/register", json={"code": "gibt-es-nicht", **NEW_ACCOUNT_BODY})
+    assert response.status_code == 400
+
+
+def test_register_with_expired_code_returns_400(
+    session: Session, admin_user: User, client: TestClient
+) -> None:
+    invitation = InvitationCode(
+        code="abgelaufen-code",
+        created_by_id=admin_user.id,
+        created_at=utcnow() - timedelta(days=10),
+        expires_at=utcnow() - timedelta(days=1),
+    )
+    session.add(invitation)
+    session.commit()
+
+    response = client.post(
+        "/api/auth/register", json={"code": "abgelaufen-code", **NEW_ACCOUNT_BODY}
+    )
+    assert response.status_code == 400
+
+
+def test_register_with_revoked_code_returns_400(
+    session: Session, admin_user: User, client: TestClient
+) -> None:
+    invitation = InvitationCode(
+        code="widerrufen-code",
+        created_by_id=admin_user.id,
+        created_at=utcnow(),
+        expires_at=utcnow() + timedelta(days=7),
+        revoked_at=utcnow(),
+    )
+    session.add(invitation)
+    session.commit()
+
+    response = client.post(
+        "/api/auth/register", json={"code": "widerrufen-code", **NEW_ACCOUNT_BODY}
+    )
+    assert response.status_code == 400
+
+
+def test_register_rejects_duplicate_username_without_consuming_the_code(
+    client: TestClient, instructor_user: User, active_invitation: InvitationCode, session: Session
+) -> None:
+    response = client.post(
+        "/api/auth/register",
+        json={"code": active_invitation.code, "username": "dozentin", "password": "x" * 12},
+    )
+
+    assert response.status_code == 409
+    session.expire_all()
+    stored = session.get(InvitationCode, active_invitation.id)
+    assert stored is not None
+    assert stored.redemption_count == 0, "a rejected registration must not count as a redemption"
+
+
+def test_register_rejects_a_too_short_password_without_consuming_the_code(
+    client: TestClient, active_invitation: InvitationCode, session: Session
+) -> None:
+    response = client.post(
+        "/api/auth/register",
+        json={"code": active_invitation.code, "username": "neue-dozentin", "password": "kurz"},
+    )
+
+    assert response.status_code == 422
+    assert str(MIN_PASSWORD_LENGTH) in response.json()["detail"]["errors"][0]
+    session.expire_all()
+    stored = session.get(InvitationCode, active_invitation.id)
+    assert stored is not None
+    assert stored.redemption_count == 0

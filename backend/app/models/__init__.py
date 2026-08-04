@@ -5,6 +5,7 @@ Importing this package registers every mapper with ``app.db.Base.metadata``.
 
 from app.models.common import utcnow
 from app.models.exam import BonusMode, Exam, Exercise, GradeThreshold
+from app.models.invitation import InvitationCode
 from app.models.lecture import Lecture
 from app.models.registration import ExercisePoints, StudentRegistration
 from app.models.user import User, UserSession
@@ -15,6 +16,7 @@ __all__ = [
     "Exercise",
     "ExercisePoints",
     "GradeThreshold",
+    "InvitationCode",
     "Lecture",
     "StudentRegistration",
     "User",

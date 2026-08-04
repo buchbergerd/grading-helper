@@ -1,17 +1,27 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type JSX } from "react";
 
 import {
+  createInvitation,
   createUser,
   errorMessages,
+  listInvitations,
   listUsers,
   resetUserPassword,
+  revokeInvitation,
   updateUser,
   type AdminUser,
+  type Invitation,
 } from "../api/client";
 import { ErrorList, SuccessNotice } from "../components/Messages";
 import { IconMenu } from "../components/icons";
 import { useAuth } from "../auth/AuthContext";
 import { formatDate } from "../util/format";
+
+const INVITATION_STATUS_LABEL: Record<Invitation["status"], string> = {
+  active: "aktiv",
+  revoked: "widerrufen",
+  expired: "abgelaufen",
+};
 
 export default function AdminUsersPage(): JSX.Element {
   const { user: currentUser } = useAuth();
@@ -30,6 +40,10 @@ export default function AdminUsersPage(): JSX.Element {
   const [resetMode, setResetMode] = useState(false);
   const [resetPassword, setResetPassword] = useState("");
   const menuContainerRef = useRef<HTMLDivElement | null>(null);
+
+  const [invitations, setInvitations] = useState<Invitation[]>([]);
+  const [invitationsLoading, setInvitationsLoading] = useState(true);
+  const [creatingInvitation, setCreatingInvitation] = useState(false);
 
   const closeMenu = useCallback(() => {
     setOpenMenuFor(null);
@@ -70,6 +84,56 @@ export default function AdminUsersPage(): JSX.Element {
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  const reloadInvitations = useCallback(async () => {
+    setInvitationsLoading(true);
+    try {
+      setInvitations(await listInvitations());
+    } catch (error) {
+      setMessages(errorMessages(error));
+    } finally {
+      setInvitationsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void reloadInvitations();
+  }, [reloadInvitations]);
+
+  async function onCreateInvitation(): Promise<void> {
+    setNotice(null);
+    setCreatingInvitation(true);
+    try {
+      await createInvitation();
+      setNotice("Der Einladungscode wurde erstellt.");
+      await reloadInvitations();
+    } catch (error) {
+      setMessages(errorMessages(error));
+    } finally {
+      setCreatingInvitation(false);
+    }
+  }
+
+  async function onCopyInvitationLink(code: string): Promise<void> {
+    const link = `${window.location.origin}/register?code=${encodeURIComponent(code)}`;
+    try {
+      await navigator.clipboard.writeText(link);
+      setNotice("Der Registrierungslink wurde in die Zwischenablage kopiert.");
+    } catch {
+      setMessages(["Der Link konnte nicht kopiert werden. Bitte den Code manuell weitergeben."]);
+    }
+  }
+
+  async function onRevokeInvitation(invitation: Invitation): Promise<void> {
+    setNotice(null);
+    try {
+      await revokeInvitation(invitation.id);
+      setNotice("Der Einladungscode wurde widerrufen.");
+      await reloadInvitations();
+    } catch (error) {
+      setMessages(errorMessages(error));
+    }
+  }
 
   async function onCreate(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -331,6 +395,68 @@ export default function AdminUsersPage(): JSX.Element {
           </button>
         </div>
       </form>
+
+      <div className="panel">
+        <h2 style={{ marginTop: 0 }}>Einladungscodes</h2>
+        <p className="muted small">
+          Alternative zum manuellen Anlegen: Mit einem Einladungscode kann sich eine neue Lehrkraft
+          selbst ein Konto erstellen. Ein Code ist beliebig oft einlösbar (z. B. einmal im
+          Team-Chat geteilt) und läuft automatisch ab (siehe „Gültig bis“) oder kann jederzeit
+          widerrufen werden.
+        </p>
+        <button
+          type="button"
+          className="primary"
+          disabled={creatingInvitation}
+          onClick={() => void onCreateInvitation()}
+        >
+          {creatingInvitation ? "Wird erstellt …" : "Einladungscode erstellen"}
+        </button>
+
+        {invitationsLoading ? (
+          <p className="muted">Wird geladen …</p>
+        ) : invitations.length === 0 ? (
+          <p className="muted">Noch keine Einladungscodes erstellt.</p>
+        ) : (
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">Code</th>
+                <th scope="col">Erstellt von</th>
+                <th scope="col">Erstellt am</th>
+                <th scope="col">Gültig bis</th>
+                <th scope="col">Status</th>
+                <th scope="col">Einlösungen</th>
+                <th scope="col">Aktionen</th>
+              </tr>
+            </thead>
+            <tbody>
+              {invitations.map((invitation) => (
+                <tr key={invitation.id}>
+                  <td>
+                    <code>{invitation.code}</code>
+                  </td>
+                  <td>{invitation.created_by}</td>
+                  <td>{formatDate(invitation.created_at)}</td>
+                  <td>{formatDate(invitation.expires_at)}</td>
+                  <td>{INVITATION_STATUS_LABEL[invitation.status]}</td>
+                  <td>{invitation.redemption_count}</td>
+                  <td className="actions-cell">
+                    <button type="button" onClick={() => void onCopyInvitationLink(invitation.code)}>
+                      Link kopieren
+                    </button>
+                    {invitation.status === "active" ? (
+                      <button type="button" onClick={() => void onRevokeInvitation(invitation)}>
+                        Widerrufen
+                      </button>
+                    ) : null}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
     </section>
   );
 }

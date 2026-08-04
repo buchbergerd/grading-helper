@@ -29,6 +29,8 @@ services:
       # for what happens if this and the proxy's TLS setup disagree (silent login failure).
       GRADINGHELPER_COOKIE_SECURE: "1"
       # GRADINGHELPER_SESSION_LIFETIME_HOURS: "24"
+      # How long an admin-issued invitation code (§3) stays redeemable. Default 7 days.
+      # GRADINGHELPER_INVITATION_LIFETIME_DAYS: "7"
     restart: unless-stopped
 
 volumes:

@@ -321,6 +321,11 @@ export function login(username: string, password: string): Promise<User> {
   return request<User>("/auth/login", { method: "POST", body: { username, password } });
 }
 
+/** Self-service account creation via an admin-issued invitation code (§3); also logs in. */
+export function register(code: string, username: string, password: string): Promise<User> {
+  return request<User>("/auth/register", { method: "POST", body: { code, username, password } });
+}
+
 export function logout(): Promise<void> {
   return request<void>("/auth/logout", { method: "POST" });
 }
@@ -417,6 +422,37 @@ export function resetUserPassword(id: number, new_password: string): Promise<voi
     method: "POST",
     body: { new_password },
   });
+}
+
+/**
+ * An admin-issued invitation code (§3) — the second way to create an instructor account,
+ * alongside `createUser` above. Reusable: redemption does not consume it, so any number of
+ * colleagues can create an account with the same code until it expires or is revoked.
+ * `status`/`redemption_count` are computed server-side, never edited here.
+ */
+export interface Invitation {
+  id: number;
+  code: string;
+  created_at: string;
+  expires_at: string;
+  created_by: string;
+  revoked_at: string | null;
+  /** How many accounts have been created with this code so far — not a roster of who. */
+  redemption_count: number;
+  status: "active" | "expired" | "revoked";
+}
+
+export function listInvitations(): Promise<Invitation[]> {
+  return request<Invitation[]>("/admin/invitations");
+}
+
+export function createInvitation(): Promise<Invitation> {
+  return request<Invitation>("/admin/invitations", { method: "POST" });
+}
+
+/** Idempotent: revoking an already-revoked or already-used code still succeeds. */
+export function revokeInvitation(id: number): Promise<void> {
+  return request<void>(`/admin/invitations/${id}`, { method: "DELETE" });
 }
 
 /* ------------------------------------------------------------------ registrations (§5, §6) */

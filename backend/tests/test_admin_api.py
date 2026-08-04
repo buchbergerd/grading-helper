@@ -7,12 +7,16 @@ department out of its own account management.
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.auth.passwords import MIN_PASSWORD_LENGTH
-from app.models import User, UserSession
+from app.config import get_settings
+from app.models import InvitationCode, User, UserSession
+from app.models.common import utcnow
 from tests.conftest import ADMIN_PASSWORD, INSTRUCTOR_PASSWORD, ClientFactory, LoginHelper
 
 #: Every admin route, as (method, path) — used by the authorization tests so a newly added route
@@ -22,6 +26,9 @@ ADMIN_ROUTES = [
     ("POST", "/api/admin/users"),
     ("PATCH", "/api/admin/users/1"),
     ("POST", "/api/admin/users/1/password"),
+    ("GET", "/api/admin/invitations"),
+    ("POST", "/api/admin/invitations"),
+    ("DELETE", "/api/admin/invitations/1"),
 ]
 
 NEW_USER_BODY = {"username": "neue-dozentin", "password": "ein-gutes-passwort-1"}
@@ -262,14 +269,156 @@ def test_password_reset_for_unknown_user_returns_404(admin_client: TestClient) -
 
 
 # --------------------------------------------------------------------------------------------
+# Invitation codes (§3) — self-service account creation, gated by an admin-issued code
+# --------------------------------------------------------------------------------------------
+
+
+def test_create_invitation_returns_a_redeemable_code(
+    admin_client: TestClient, admin_user: User
+) -> None:
+    response = admin_client.post("/api/admin/invitations")
+
+    assert response.status_code == 201
+    body = response.json()
+    assert len(body["code"]) > 20, "expected a real random token, not a placeholder"
+    assert body["created_by"] == admin_user.username
+    assert body["status"] == "active"
+    assert body["redemption_count"] == 0
+    assert body["revoked_at"] is None
+
+
+def test_invitation_expires_after_the_configured_lifetime(admin_client: TestClient) -> None:
+    body = admin_client.post("/api/admin/invitations").json()
+
+    created_at = datetime.fromisoformat(body["created_at"])
+    expires_at = datetime.fromisoformat(body["expires_at"])
+    assert (expires_at - created_at).days == get_settings().invitation_lifetime_days
+
+
+def test_list_invitations_reports_every_status(
+    admin_client: TestClient, admin_user: User, session: Session
+) -> None:
+    now = utcnow()
+    session.add_all(
+        [
+            InvitationCode(
+                code="active-code",
+                created_by_id=admin_user.id,
+                created_at=now,
+                expires_at=now + timedelta(days=7),
+            ),
+            InvitationCode(
+                code="redeemed-several-times-code",
+                created_by_id=admin_user.id,
+                created_at=now,
+                expires_at=now + timedelta(days=7),
+                redemption_count=3,
+            ),
+            InvitationCode(
+                code="revoked-code",
+                created_by_id=admin_user.id,
+                created_at=now,
+                expires_at=now + timedelta(days=7),
+                revoked_at=now,
+            ),
+            InvitationCode(
+                code="expired-code",
+                created_by_id=admin_user.id,
+                created_at=now - timedelta(days=10),
+                expires_at=now - timedelta(days=3),
+            ),
+        ]
+    )
+    session.commit()
+
+    body = admin_client.get("/api/admin/invitations").json()
+    status_by_code = {entry["code"]: entry["status"] for entry in body}
+
+    assert status_by_code == {
+        "active-code": "active",
+        "redeemed-several-times-code": "active",
+        "revoked-code": "revoked",
+        "expired-code": "expired",
+    }
+    redeemed_entry = next(entry for entry in body if entry["code"] == "redeemed-several-times-code")
+    assert redeemed_entry["redemption_count"] == 3
+
+
+def test_a_code_can_be_redeemed_by_more_than_one_colleague(
+    admin_client: TestClient, client_factory: ClientFactory
+) -> None:
+    """The headline behaviour of this feature: one code, shared once, used by a whole team."""
+    code = admin_client.post("/api/admin/invitations").json()["code"]
+
+    first = client_factory().post(
+        "/api/auth/register",
+        json={"code": code, "username": "erste-kollegin", "password": "ein-gutes-passwort-1"},
+    )
+    second = client_factory().post(
+        "/api/auth/register",
+        json={"code": code, "username": "zweiter-kollege", "password": "ein-anderes-passwort-1"},
+    )
+
+    assert first.status_code == 201
+    assert second.status_code == 201
+
+    listed = admin_client.get("/api/admin/invitations").json()[0]
+    assert listed["redemption_count"] == 2
+    assert listed["status"] == "active"
+
+
+def test_revoking_an_active_invitation_stops_it_from_being_redeemable(
+    admin_client: TestClient, client: TestClient
+) -> None:
+    code = admin_client.post("/api/admin/invitations").json()["code"]
+    invitation_id = admin_client.get("/api/admin/invitations").json()[0]["id"]
+
+    response = admin_client.delete(f"/api/admin/invitations/{invitation_id}")
+    assert response.status_code == 204
+
+    listed = admin_client.get("/api/admin/invitations").json()[0]
+    assert listed["status"] == "revoked"
+
+    register_response = client.post(
+        "/api/auth/register",
+        json={"code": code, "username": "zu-spaet", "password": "ein-gutes-passwort-1"},
+    )
+    assert register_response.status_code == 400
+
+
+def test_revoking_is_idempotent(admin_client: TestClient) -> None:
+    invitation_id = admin_client.post("/api/admin/invitations").json()["id"]
+
+    first = admin_client.delete(f"/api/admin/invitations/{invitation_id}")
+    second = admin_client.delete(f"/api/admin/invitations/{invitation_id}")
+
+    assert first.status_code == 204
+    assert second.status_code == 204
+
+
+def test_revoke_unknown_invitation_returns_404(admin_client: TestClient) -> None:
+    assert admin_client.delete("/api/admin/invitations/9999").status_code == 404
+
+
+# --------------------------------------------------------------------------------------------
 # §14 #5 — the admin API must not reach exam data
 # --------------------------------------------------------------------------------------------
 
 
 def test_admin_router_exposes_only_user_routes() -> None:
-    """Guard for the least-privilege boundary: admins manage accounts, not exam data (§14 #5)."""
+    """Guard for the least-privilege boundary: admins manage accounts, not exam data (§14 #5).
+
+    Invitation-code routes belong in this set too: they gate *account creation*, the same
+    account-management boundary as the user routes, and never touch a lecture/exam table.
+    """
     from app.api import admin as admin_module
 
     paths = {route.path for route in admin_module.router.routes}  # type: ignore[attr-defined]
 
-    assert paths == {"/admin/users", "/admin/users/{user_id}", "/admin/users/{user_id}/password"}
+    assert paths == {
+        "/admin/users",
+        "/admin/users/{user_id}",
+        "/admin/users/{user_id}/password",
+        "/admin/invitations",
+        "/admin/invitations/{invitation_id}",
+    }

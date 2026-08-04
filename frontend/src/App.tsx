@@ -11,6 +11,7 @@ import LectureListPage from "./pages/LectureListPage";
 import LoginPage from "./pages/LoginPage";
 import NotFoundPage from "./pages/NotFoundPage";
 import PointsEntryPage from "./pages/PointsEntryPage";
+import RegisterPage from "./pages/RegisterPage";
 import RegistrationsPage from "./pages/RegistrationsPage";
 
 function Layout(): JSX.Element {
@@ -53,6 +54,7 @@ export default function App(): JSX.Element {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/register" element={<RegisterPage />} />
       <Route
         element={
           <RequireAuth>

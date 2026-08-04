@@ -32,6 +32,7 @@ routes require a valid session; the frontend never reads the cookie.
 | POST | `/api/auth/logout` | — | `204`, deletes the session row and clears the cookie. **Idempotent**: also `204` with a missing, expired or already-revoked cookie — a `401` here would strand a dead cookie in the browser with no way to clear it |
 | GET | `/api/auth/me` | — | `{id, username, is_admin}`; `401` if no/expired session |
 | POST | `/api/auth/password` | `{current_password, new_password}` | `204` — self-service change; verifies `current_password`; `422` + `{"detail": {"errors": [German strings]}}` if the new password fails policy (§14 #13/#14 — same shape as grading-schema validation errors, the app's one shape for "show these German messages verbatim") |
+| POST | `/api/auth/register` | `{code, username, password}` | `201` + sets cookie, `{id, username, is_admin}` (always `is_admin: false`) — self-service account creation via an admin-issued invitation code (§3). Besides `/login`, the only unauthenticated route that creates state (`/health` and `/logout` need no session either, but neither one ever writes a row). The code is **not consumed** by a successful redemption — see the Invitations table below. `400` if the code is unknown, expired or revoked (one message, reasons not distinguished); `409` if the username is taken; `422` + the same password-policy shape as above. The code is checked *before* the username, so an invalid code never reaches the username-uniqueness check |
 
 ## Account management (admin only, §3)
 
@@ -44,6 +45,22 @@ Non-admins get `403` here (existence of the admin API is not secret; individual 
 | POST | `/api/admin/users` | `{username, password, is_admin?}` | `201` + user; `409` if username taken; `422` + `{"detail": {"errors": [...]}}` on a policy-failing password (§14 #13/#14) |
 | PATCH | `/api/admin/users/{id}` | `{is_active?, is_admin?}` | `200` + user. Deactivating **also deletes that user's sessions** (immediate revocation). An admin cannot deactivate or demote their own account (prevents locking the last admin out) → `400` |
 | POST | `/api/admin/users/{id}/password` | `{new_password}` | `204` — reset; also deletes that user's sessions; same `422` shape as above on policy failure |
+
+### Invitation codes (admin only, §3)
+
+The other way to create an instructor account: an admin issues a code and shares it out of band
+(e.g. posted once in a group chat, or as a link containing it), and anyone holding it redeems it
+themselves via `POST /api/auth/register` above. A code is **reusable** — redemption does not
+consume it, so any number of colleagues can create an account with the same code — and expires
+after a configured lifetime (`GRADINGHELPER_INVITATION_LIFETIME_DAYS`, default 7 days); there is
+no per-code override. It always creates a non-admin account; admin rights are never grantable
+through a code.
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | `/api/admin/invitations` | — | `[{id, code, created_at, expires_at, created_by, revoked_at, redemption_count, status}]`, newest first. `status` is computed, not stored: one of `active`/`revoked`/`expired`. `redemption_count` is how many accounts have been created with this code so far — not a roster (see the users list for who) |
+| POST | `/api/admin/invitations` | — | `201` + the new code, `status: "active"`, `redemption_count: 0`. The code is returned in full — it isn't protected as a secret the way a password is, only as a time-limited credential |
+| DELETE | `/api/admin/invitations/{id}` | — | `204` — revokes the code so it can no longer be redeemed, however many times it already has been. **Idempotent**: revoking an already-revoked code still `204`s; `404` only if the id doesn't exist |
 
 ## Lectures (§4)
 

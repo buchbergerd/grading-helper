@@ -10,7 +10,14 @@ import {
 } from "react";
 import { Navigate, useLocation } from "react-router";
 
-import { ApiError, login as apiLogin, logout as apiLogout, me as apiMe, type User } from "../api/client";
+import {
+  ApiError,
+  login as apiLogin,
+  logout as apiLogout,
+  me as apiMe,
+  register as apiRegister,
+  type User,
+} from "../api/client";
 
 interface AuthContextValue {
   /** null = definitely not logged in (once `loading` is false). */
@@ -18,6 +25,8 @@ interface AuthContextValue {
   /** True until the initial /api/auth/me round trip has settled. */
   loading: boolean;
   login: (username: string, password: string) => Promise<void>;
+  /** Self-service account creation via an invitation code (§3); also logs in. */
+  register: (code: string, username: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
 }
@@ -55,6 +64,11 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
     setUser(await apiLogin(username, password));
   }, []);
 
+  const register = useCallback(async (code: string, username: string, password: string) => {
+    // Let ApiError propagate: RegisterPage shows the server's German message verbatim.
+    setUser(await apiRegister(code, username, password));
+  }, []);
+
   const logout = useCallback(async () => {
     try {
       await apiLogout();
@@ -64,8 +78,8 @@ export function AuthProvider({ children }: { children: ReactNode }): JSX.Element
   }, []);
 
   const value = useMemo<AuthContextValue>(
-    () => ({ user, loading, login, logout, refresh }),
-    [user, loading, login, logout, refresh],
+    () => ({ user, loading, login, register, logout, refresh }),
+    [user, loading, login, register, logout, refresh],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
