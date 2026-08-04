@@ -6,8 +6,11 @@ line or an error message. Same for passwords.
 
 from __future__ import annotations
 
+from typing import Any, cast
+
 from fastapi import APIRouter, HTTPException, Response, status
-from sqlalchemy import select
+from sqlalchemy import or_, select, update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 
 from app.api.schemas import LoginRequest, PasswordChangeRequest, RegisterRequest, UserIdentity
@@ -31,10 +34,14 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 #: that a named colleague's account has been disabled.
 INVALID_CREDENTIALS_DETAIL = "Benutzername oder Passwort ist falsch."
 WRONG_CURRENT_PASSWORD_DETAIL = "Das aktuelle Passwort ist falsch."
-#: One message for "no such code", "expired" and "revoked" — same reasoning as above, and the
-#: code space is 256 bits of entropy (``INVITATION_CODE_BYTES``) so there is no realistic
-#: enumeration to protect against; this is just consistency, not a security control.
-INVALID_INVITATION_DETAIL = "Dieser Einladungscode ist ungültig, abgelaufen oder wurde widerrufen."
+#: One message for "no such code", "expired", "revoked" and "already redeemed the maximum number
+#: of times" — same reasoning as above, and the code space is 256 bits of entropy
+#: (``INVITATION_CODE_BYTES``) so there is no realistic enumeration to protect against; this is
+#: just consistency, not a security control.
+INVALID_INVITATION_DETAIL = (
+    "Dieser Einladungscode ist ungültig, abgelaufen, wurde widerrufen oder wurde bereits "
+    "die maximale Anzahl an Malen eingelöst."
+)
 USERNAME_TAKEN_DETAIL = "Dieser Benutzername ist bereits vergeben."
 
 
@@ -83,9 +90,14 @@ def register(payload: RegisterRequest, response: Response, db: DbSession) -> Use
 
     A code is reusable — this route does not consume it, only increments its
     ``redemption_count`` — so the same code can be redeemed by any number of colleagues until it
-    expires or an admin revokes it (e.g. one code posted in a group chat). The increment is a
-    SQL-side ``redemption_count + 1``, not a Python read-modify-write, so two concurrent
-    redemptions of the same code never lose a count.
+    expires, an admin revokes it, or (if capped) it has reached its ``max_uses`` (e.g. one code
+    posted in a group chat). The increment happens via a single atomic ``UPDATE ... WHERE``
+    statement whose ``WHERE`` clause re-checks ``max_uses`` server-side
+    (``redemption_count < max_uses``), not a Python read-modify-write: two concurrent redemptions
+    of the same about-to-be-exhausted code can't both read "one slot left" and both squeeze
+    through, pushing the count past the cap. A ``0`` rowcount means the code was consumed out
+    from under this request between the lookup above and here — same outcome as any other invalid
+    code.
 
     Always creates a non-admin account; there is no way to request admin rights through a code.
     """
@@ -107,6 +119,26 @@ def register(payload: RegisterRequest, response: Response, db: DbSession) -> Use
     if errors:
         raise HTTPException(status_code=422, detail={"errors": errors})
 
+    redemption = cast(
+        "CursorResult[Any]",
+        db.execute(
+            update(InvitationCode)
+            .where(InvitationCode.id == invitation.id)
+            .where(
+                or_(
+                    InvitationCode.max_uses.is_(None),
+                    InvitationCode.redemption_count < InvitationCode.max_uses,
+                )
+            )
+            .values(redemption_count=InvitationCode.redemption_count + 1)
+        ),
+    )
+    if redemption.rowcount == 0:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=INVALID_INVITATION_DETAIL
+        )
+
     user = User(
         username=payload.username,
         password_hash=hash_password(payload.password),
@@ -114,7 +146,6 @@ def register(payload: RegisterRequest, response: Response, db: DbSession) -> Use
         is_active=True,
     )
     db.add(user)
-    invitation.redemption_count = InvitationCode.redemption_count + 1
     try:
         db.commit()
     except IntegrityError as exc:

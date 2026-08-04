@@ -32,7 +32,7 @@ routes require a valid session; the frontend never reads the cookie.
 | POST | `/api/auth/logout` | — | `204`, deletes the session row and clears the cookie. **Idempotent**: also `204` with a missing, expired or already-revoked cookie — a `401` here would strand a dead cookie in the browser with no way to clear it |
 | GET | `/api/auth/me` | — | `{id, username, is_admin}`; `401` if no/expired session |
 | POST | `/api/auth/password` | `{current_password, new_password}` | `204` — self-service change; verifies `current_password`; `422` + `{"detail": {"errors": [German strings]}}` if the new password fails policy (§14 #13/#14 — same shape as grading-schema validation errors, the app's one shape for "show these German messages verbatim") |
-| POST | `/api/auth/register` | `{code, username, password}` | `201` + sets cookie, `{id, username, is_admin}` (always `is_admin: false`) — self-service account creation via an admin-issued invitation code (§3). Besides `/login`, the only unauthenticated route that creates state (`/health` and `/logout` need no session either, but neither one ever writes a row). The code is **not consumed** by a successful redemption — see the Invitations table below. `400` if the code is unknown, expired or revoked (one message, reasons not distinguished); `409` if the username is taken; `422` + the same password-policy shape as above. The code is checked *before* the username, so an invalid code never reaches the username-uniqueness check |
+| POST | `/api/auth/register` | `{code, username, password}` | `201` + sets cookie, `{id, username, is_admin}` (always `is_admin: false`) — self-service account creation via an admin-issued invitation code (§3). Besides `/login`, the only unauthenticated route that creates state (`/health` and `/logout` need no session either, but neither one ever writes a row). The code is **not consumed** by a successful redemption — see the Invitations table below. `400` if the code is unknown, expired, revoked, or has already reached its `max_uses` (one message, reasons not distinguished); `409` if the username is taken; `422` + the same password-policy shape as above. The code is checked *before* the username, so an invalid code never reaches the username-uniqueness check |
 
 ## Account management (admin only, §3)
 
@@ -53,14 +53,20 @@ The other way to create an instructor account: an admin issues a code and shares
 themselves via `POST /api/auth/register` above. A code is **reusable** — redemption does not
 consume it, so any number of colleagues can create an account with the same code — and expires
 after a configured lifetime (`GRADINGHELPER_INVITATION_LIFETIME_DAYS`, default 7 days); there is
-no per-code override. It always creates a non-admin account; admin rights are never grantable
-through a code.
+no per-code override for the lifetime. It always creates a non-admin account; admin rights are
+never grantable through a code.
+
+An admin can *optionally* cap how many times a code may be redeemed at creation time
+(`max_uses`), independent of the time-based expiry — e.g. "share with exactly the 5 new hires".
+`max_uses` is set once and is not editable afterwards; to change it, revoke and issue a new code.
+It is a plain JSON integer on the wire (not a `DecimalString` — §7.0's decimal rule is about
+grading arithmetic, not this count) and is omitted/`null` for the default, unlimited-use code.
 
 | Method | Path | Body | Response |
 |---|---|---|---|
-| GET | `/api/admin/invitations` | — | `[{id, code, created_at, expires_at, created_by, revoked_at, redemption_count, status}]`, newest first. `status` is computed, not stored: one of `active`/`revoked`/`expired`. `redemption_count` is how many accounts have been created with this code so far — not a roster (see the users list for who) |
-| POST | `/api/admin/invitations` | — | `201` + the new code, `status: "active"`, `redemption_count: 0`. The code is returned in full — it isn't protected as a secret the way a password is, only as a time-limited credential |
-| DELETE | `/api/admin/invitations/{id}` | — | `204` — revokes the code so it can no longer be redeemed, however many times it already has been. **Idempotent**: revoking an already-revoked code still `204`s; `404` only if the id doesn't exist |
+| GET | `/api/admin/invitations` | — | `[{id, code, created_at, expires_at, created_by, revoked_at, redemption_count, max_uses, status}]`, newest first. `status` is computed, not stored: one of `active`/`revoked`/`expired`/`exhausted` (`redemption_count` has reached `max_uses`). `redemption_count` is how many accounts have been created with this code so far — not a roster (see the users list for who). `max_uses` is `null` for an unlimited-use code |
+| POST | `/api/admin/invitations` | `{max_uses?}` | `201` + the new code, `status: "active"`, `redemption_count: 0`. Body is entirely optional — an absent/empty body or `max_uses: null` creates an unlimited-use code, same as before this option existed; a positive integer caps redemptions; `0` or negative is `422`. The code is returned in full — it isn't protected as a secret the way a password is, only as a time-limited credential |
+| DELETE | `/api/admin/invitations/{id}` | — | `204` — revokes the code so it can no longer be redeemed, however many times it already has been. **Idempotent**: revoking an already-revoked (or already-exhausted) code still `204`s; `404` only if the id doesn't exist |
 
 ## Lectures (§4)
 

@@ -285,6 +285,18 @@ def test_create_invitation_returns_a_redeemable_code(
     assert body["status"] == "active"
     assert body["redemption_count"] == 0
     assert body["revoked_at"] is None
+    assert body["max_uses"] is None, "no body means unlimited, as before this option existed"
+
+
+def test_create_invitation_accepts_an_optional_max_uses(admin_client: TestClient) -> None:
+    response = admin_client.post("/api/admin/invitations", json={"max_uses": 5})
+
+    assert response.status_code == 201
+    assert response.json()["max_uses"] == 5
+
+
+def test_create_invitation_rejects_a_non_positive_max_uses(admin_client: TestClient) -> None:
+    assert admin_client.post("/api/admin/invitations", json={"max_uses": 0}).status_code == 422
 
 
 def test_invitation_expires_after_the_configured_lifetime(admin_client: TestClient) -> None:
@@ -327,6 +339,14 @@ def test_list_invitations_reports_every_status(
                 created_at=now - timedelta(days=10),
                 expires_at=now - timedelta(days=3),
             ),
+            InvitationCode(
+                code="exhausted-code",
+                created_by_id=admin_user.id,
+                created_at=now,
+                expires_at=now + timedelta(days=7),
+                redemption_count=2,
+                max_uses=2,
+            ),
         ]
     )
     session.commit()
@@ -339,6 +359,7 @@ def test_list_invitations_reports_every_status(
         "redeemed-several-times-code": "active",
         "revoked-code": "revoked",
         "expired-code": "expired",
+        "exhausted-code": "exhausted",
     }
     redeemed_entry = next(entry for entry in body if entry["code"] == "redeemed-several-times-code")
     assert redeemed_entry["redemption_count"] == 3
@@ -365,6 +386,28 @@ def test_a_code_can_be_redeemed_by_more_than_one_colleague(
     listed = admin_client.get("/api/admin/invitations").json()[0]
     assert listed["redemption_count"] == 2
     assert listed["status"] == "active"
+
+
+def test_a_code_with_max_uses_stops_being_redeemable_once_the_cap_is_reached(
+    admin_client: TestClient, client_factory: ClientFactory
+) -> None:
+    code = admin_client.post("/api/admin/invitations", json={"max_uses": 1}).json()["code"]
+
+    first = client_factory().post(
+        "/api/auth/register",
+        json={"code": code, "username": "erste-kollegin", "password": "ein-gutes-passwort-1"},
+    )
+    second = client_factory().post(
+        "/api/auth/register",
+        json={"code": code, "username": "zweiter-kollege", "password": "ein-anderes-passwort-1"},
+    )
+
+    assert first.status_code == 201
+    assert second.status_code == 400
+
+    listed = admin_client.get("/api/admin/invitations").json()[0]
+    assert listed["redemption_count"] == 1, "the rejected second attempt must not count"
+    assert listed["status"] == "exhausted"
 
 
 def test_revoking_an_active_invitation_stops_it_from_being_redeemable(

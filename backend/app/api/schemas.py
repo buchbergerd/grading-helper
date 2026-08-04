@@ -98,14 +98,15 @@ class PasswordResetRequest(BaseModel):
 class InvitationOut(BaseModel):
     """``POST``/``GET /api/admin/invitations`` — an admin-issued invitation code (§3).
 
-    A code is reusable: it is not consumed by redemption, only by expiry or revocation, so one
-    code can be shared with a whole team (e.g. posted in a group chat). ``status`` is computed at
-    response time, never stored: ``revoked`` (an admin cancelled it), ``expired`` (past
-    ``expires_at``) or ``active`` (still redeemable, any number of times).
-    ``redemption_count`` is how many accounts have been created with this code so far — with one
-    code shared broadly, the users list (and its ``created_at``) already tells you who, so this
-    is a count, not a roster. ``created_by`` is a username, not an id — the admin UI has no other
-    reason to look up a user record for this page.
+    A code is reusable: it is not consumed by redemption, only by expiry, revocation, or
+    (optionally) reaching ``max_uses``, so one code can be shared with a whole team (e.g. posted
+    in a group chat). ``status`` is computed at response time, never stored: ``revoked`` (an admin
+    cancelled it), ``expired`` (past ``expires_at``), ``exhausted`` (``redemption_count`` has
+    reached ``max_uses``) or ``active`` (still redeemable). ``redemption_count`` is how many
+    accounts have been created with this code so far — with one code shared broadly, the users
+    list (and its ``created_at``) already tells you who, so this is a count, not a roster.
+    ``max_uses`` is ``None`` for an unlimited-use code — the default. ``created_by`` is a
+    username, not an id — the admin UI has no other reason to look up a user record for this page.
     """
 
     id: int
@@ -115,11 +116,23 @@ class InvitationOut(BaseModel):
     created_by: str
     revoked_at: datetime | None
     redemption_count: int
-    status: Literal["active", "expired", "revoked"]
+    max_uses: int | None
+    status: Literal["active", "expired", "revoked", "exhausted"]
 
     @field_serializer("created_at", "expires_at", "revoked_at")
     def _serialize_datetime(self, value: datetime | None) -> str | None:
         return None if value is None else _iso_utc(value)
+
+
+class InvitationCreateRequest(BaseModel):
+    """``POST /api/admin/invitations`` — body is optional; an empty/absent body means unlimited.
+
+    ``max_uses`` is a plain redemption count, not a points/percentage value, so it crosses the
+    wire as an ordinary JSON integer — §7.0's decimal-string rule is about avoiding binary-float
+    error in grading arithmetic and does not apply here.
+    """
+
+    max_uses: int | None = Field(default=None, ge=1)
 
 
 class RegisterRequest(BaseModel):

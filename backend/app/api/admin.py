@@ -20,6 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.api.schemas import (
+    InvitationCreateRequest,
     InvitationOut,
     PasswordResetRequest,
     UserAccount,
@@ -169,16 +170,19 @@ def _get_invitation_or_404(db: DbSession, invitation_id: int) -> InvitationCode:
 
 def _invitation_status(
     invitation: InvitationCode, now: datetime
-) -> Literal["active", "expired", "revoked"]:
-    """One of ``active``/``revoked``/``expired`` — see :class:`InvitationOut`.
+) -> Literal["active", "expired", "revoked", "exhausted"]:
+    """One of ``active``/``revoked``/``expired``/``exhausted`` — see :class:`InvitationOut`.
 
     A code is reusable, so there is no "used" state to report here: redemption is tracked as a
-    count, not a terminal status.
+    count, not a terminal status — except once that count reaches an optional ``max_uses``, which
+    is as terminal as revocation or expiry.
     """
     if invitation.revoked_at is not None:
         return "revoked"
     if as_utc(invitation.expires_at) <= now:
         return "expired"
+    if invitation.max_uses is not None and invitation.redemption_count >= invitation.max_uses:
+        return "exhausted"
     return "active"
 
 
@@ -191,6 +195,7 @@ def _to_invitation_out(invitation: InvitationCode, now: datetime) -> InvitationO
         created_by=invitation.created_by.username,
         revoked_at=invitation.revoked_at,
         redemption_count=invitation.redemption_count,
+        max_uses=invitation.max_uses,
         status=_invitation_status(invitation, now),
     )
 
@@ -208,14 +213,19 @@ def list_invitations(admin: AdminUser, db: DbSession) -> list[InvitationOut]:
 
 
 @router.post("/invitations", response_model=InvitationOut, status_code=status.HTTP_201_CREATED)
-def create_invitation(admin: AdminUser, db: DbSession) -> InvitationOut:
+def create_invitation(
+    admin: AdminUser, db: DbSession, payload: InvitationCreateRequest | None = None
+) -> InvitationOut:
     """Issue a new invitation code, valid for the configured lifetime (default 7 days, §3).
 
-    The code is reusable — any number of accounts can be created with it until it expires or an
-    admin revokes it, so one code can be shared with a whole team at once (e.g. posted in a group
-    chat). It is returned in full so the admin can copy a registration link — it is not a secret
-    the app protects on the admin's behalf the way a password is, only a time-limited
-    account-creation credential the admin already holds by having just created it.
+    The code is reusable — any number of accounts can be created with it until it expires, an
+    admin revokes it, or (if ``payload.max_uses`` is set) it has been redeemed that many times —
+    so one code can be shared with a whole team at once (e.g. posted in a group chat), optionally
+    capped to a known head count. The body is entirely optional: an absent/empty body creates an
+    unlimited-use code, same as before this option existed. The code is returned in full so the
+    admin can copy a registration link — it is not a secret the app protects on the admin's
+    behalf the way a password is, only a time-limited account-creation credential the admin
+    already holds by having just created it.
     """
     now = utcnow()
     invitation = InvitationCode(
@@ -223,6 +233,7 @@ def create_invitation(admin: AdminUser, db: DbSession) -> InvitationOut:
         created_by_id=admin.id,
         created_at=now,
         expires_at=now + timedelta(days=get_settings().invitation_lifetime_days),
+        max_uses=payload.max_uses if payload is not None else None,
     )
     db.add(invitation)
     db.commit()

@@ -52,15 +52,18 @@ specification is in English for the implementing developer/agent.
   is the safer default.
 - No public/anonymous access, with one exception: an admin can issue a reusable **invitation
   code** that expires after a pre-defined amount of time (default 7 days, configurable
-  deployment-wide, not per code). Anyone holding an unexpired, non-revoked code can create their
-  own instructor account with it — always non-admin; granting admin rights still requires an
-  existing admin via the account-management API. A code is not consumed by use: it can be
-  redeemed by any number of people (e.g. one code posted in a department group chat so a whole
-  team can join at once) until it expires or an admin revokes it early. This is an addition to,
-  not a replacement for, admin-direct account creation; both ways of creating an instructor
-  account stay available side by side. Sharing a code more widely than intended has no backstop
-  besides its expiry and manual revocation, so treat it accordingly. No student-facing accounts —
-  students never log in; they only ever see the printed/exported "student report" PDF,
+  deployment-wide, not per code). Anyone holding an unexpired, non-revoked, not-yet-exhausted
+  code can create their own instructor account with it — always non-admin; granting admin rights
+  still requires an existing admin via the account-management API. A code is not consumed by use:
+  it can be redeemed by any number of people (e.g. one code posted in a department group chat so
+  a whole team can join at once) until it expires, an admin revokes it early, or — optionally —
+  it has been redeemed a maximum number of times the admin set when creating it (e.g. "exactly
+  the 5 new hires"; unset by default, meaning unlimited). This is an addition to, not a
+  replacement for, admin-direct account creation; both ways of creating an instructor account
+  stay available side by side. Sharing a code more widely than intended has no backstop besides
+  its expiry, manual revocation, and (if set) its use cap, so treat it accordingly. No
+  student-facing accounts — students never log in; they only ever see the printed/exported
+  "student report" PDF,
   distributed by the instructor through whatever channel is normal in the department (out of
   scope here).
 

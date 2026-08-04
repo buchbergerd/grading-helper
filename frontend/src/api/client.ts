@@ -427,8 +427,9 @@ export function resetUserPassword(id: number, new_password: string): Promise<voi
 /**
  * An admin-issued invitation code (§3) — the second way to create an instructor account,
  * alongside `createUser` above. Reusable: redemption does not consume it, so any number of
- * colleagues can create an account with the same code until it expires or is revoked.
- * `status`/`redemption_count` are computed server-side, never edited here.
+ * colleagues can create an account with the same code until it expires, is revoked, or
+ * (optionally) reaches `max_uses`. `status`/`redemption_count` are computed server-side, never
+ * edited here.
  */
 export interface Invitation {
   id: number;
@@ -439,15 +440,21 @@ export interface Invitation {
   revoked_at: string | null;
   /** How many accounts have been created with this code so far — not a roster of who. */
   redemption_count: number;
-  status: "active" | "expired" | "revoked";
+  /** `null` means unlimited — the default. */
+  max_uses: number | null;
+  status: "active" | "expired" | "revoked" | "exhausted";
 }
 
 export function listInvitations(): Promise<Invitation[]> {
   return request<Invitation[]>("/admin/invitations");
 }
 
-export function createInvitation(): Promise<Invitation> {
-  return request<Invitation>("/admin/invitations", { method: "POST" });
+/** `maxUses` omitted or `undefined` creates an unlimited-use code. */
+export function createInvitation(maxUses?: number): Promise<Invitation> {
+  return request<Invitation>("/admin/invitations", {
+    method: "POST",
+    body: { max_uses: maxUses ?? null },
+  });
 }
 
 /** Idempotent: revoking an already-revoked or already-used code still succeeds. */

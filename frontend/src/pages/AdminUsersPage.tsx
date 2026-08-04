@@ -21,6 +21,7 @@ const INVITATION_STATUS_LABEL: Record<Invitation["status"], string> = {
   active: "aktiv",
   revoked: "widerrufen",
   expired: "abgelaufen",
+  exhausted: "ausgeschöpft",
 };
 
 export default function AdminUsersPage(): JSX.Element {
@@ -44,6 +45,8 @@ export default function AdminUsersPage(): JSX.Element {
   const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [invitationsLoading, setInvitationsLoading] = useState(true);
   const [creatingInvitation, setCreatingInvitation] = useState(false);
+  /** Empty string means unlimited — the field's placeholder/default state. */
+  const [newInvitationMaxUses, setNewInvitationMaxUses] = useState("");
 
   const closeMenu = useCallback(() => {
     setOpenMenuFor(null);
@@ -102,10 +105,17 @@ export default function AdminUsersPage(): JSX.Element {
 
   async function onCreateInvitation(): Promise<void> {
     setNotice(null);
+    const trimmed = newInvitationMaxUses.trim();
+    const maxUses = trimmed === "" ? undefined : Number(trimmed);
+    if (maxUses !== undefined && (!Number.isInteger(maxUses) || maxUses < 1)) {
+      setMessages(["Die maximale Anzahl an Einlösungen muss eine ganze Zahl ab 1 sein."]);
+      return;
+    }
     setCreatingInvitation(true);
     try {
-      await createInvitation();
+      await createInvitation(maxUses);
       setNotice("Der Einladungscode wurde erstellt.");
+      setNewInvitationMaxUses("");
       await reloadInvitations();
     } catch (error) {
       setMessages(errorMessages(error));
@@ -404,14 +414,28 @@ export default function AdminUsersPage(): JSX.Element {
           Team-Chat geteilt) und läuft automatisch ab (siehe „Gültig bis“) oder kann jederzeit
           widerrufen werden.
         </p>
-        <button
-          type="button"
-          className="primary"
-          disabled={creatingInvitation}
-          onClick={() => void onCreateInvitation()}
-        >
-          {creatingInvitation ? "Wird erstellt …" : "Einladungscode erstellen"}
-        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+          <label htmlFor="new-invitation-max-uses" className="muted small">
+            Max. Einlösungen (optional)
+          </label>
+          <input
+            id="new-invitation-max-uses"
+            type="text"
+            inputMode="numeric"
+            style={{ width: "5rem" }}
+            placeholder="unbegrenzt"
+            value={newInvitationMaxUses}
+            onChange={(event) => setNewInvitationMaxUses(event.target.value)}
+          />
+          <button
+            type="button"
+            className="primary"
+            disabled={creatingInvitation}
+            onClick={() => void onCreateInvitation()}
+          >
+            {creatingInvitation ? "Wird erstellt …" : "Einladungscode erstellen"}
+          </button>
+        </div>
 
         {invitationsLoading ? (
           <p className="muted">Wird geladen …</p>
@@ -440,7 +464,11 @@ export default function AdminUsersPage(): JSX.Element {
                   <td>{formatDate(invitation.created_at)}</td>
                   <td>{formatDate(invitation.expires_at)}</td>
                   <td>{INVITATION_STATUS_LABEL[invitation.status]}</td>
-                  <td>{invitation.redemption_count}</td>
+                  <td>
+                    {invitation.max_uses === null
+                      ? invitation.redemption_count
+                      : `${invitation.redemption_count} / ${invitation.max_uses}`}
+                  </td>
                   <td className="actions-cell">
                     <button type="button" onClick={() => void onCopyInvitationLink(invitation.code)}>
                       Link kopieren
