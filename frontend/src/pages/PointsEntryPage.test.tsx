@@ -763,6 +763,122 @@ describe("PointsEntryPage — course filter (§8)", () => {
   });
 });
 
+describe("PointsEntryPage — sort order (§6)", () => {
+  /** Deliberately chosen so Matrikelnummer order, Nachname order, and (Studiengang, Nachname)
+   * order are all three different permutations of the same three rows — a fixture where they
+   * happened to coincide (like the shared `GRID` above) couldn't tell a working re-sort from a
+   * no-op. */
+  const SORT_GRID: PointsGrid = {
+    ...GRID,
+    entries: [
+      {
+        id: 10,
+        matrikelnummer: "1010",
+        nachname: "Zimmer",
+        vorname: "Anna",
+        course_code: "A",
+        versuch: 1,
+        attended: true,
+        points: {},
+        raw_total: "0.00",
+        final_total: null,
+        grade: null,
+        status: "in_progress",
+        is_complete: false,
+      },
+      {
+        id: 20,
+        matrikelnummer: "1020",
+        nachname: "Adam",
+        vorname: "Ben",
+        course_code: "A",
+        versuch: 1,
+        attended: true,
+        points: {},
+        raw_total: "0.00",
+        final_total: null,
+        grade: null,
+        status: "in_progress",
+        is_complete: false,
+      },
+      {
+        id: 30,
+        matrikelnummer: "1030",
+        nachname: "Mueller",
+        vorname: "Clara",
+        course_code: "B",
+        versuch: 1,
+        attended: true,
+        points: {},
+        raw_total: "0.00",
+        final_total: null,
+        grade: null,
+        status: "in_progress",
+        is_complete: false,
+      },
+    ],
+  };
+
+  function visibleRowOrder(): string[] {
+    return Array.from(document.querySelectorAll('[data-testid^="points-row-"]')).map(
+      (el) => el.getAttribute("data-testid") ?? "",
+    );
+  }
+
+  function renderSortGrid(): ReturnType<typeof installFetchMock> {
+    return renderPage({
+      "/api/exams/7/points": (_url, init) =>
+        init?.method === "PUT" ? echoPut(init) : jsonResponse(200, SORT_GRID),
+    });
+  }
+
+  it("defaults to Matrikelnummer order, matching what the server already returns", async () => {
+    renderSortGrid();
+    await screen.findByTestId("points-row-10");
+
+    expect(visibleRowOrder()).toEqual(["points-row-10", "points-row-20", "points-row-30"]);
+  });
+
+  it("re-sorts by Nachname (DIN 5007-1) when chosen", async () => {
+    const user = userEvent.setup();
+    renderSortGrid();
+    await screen.findByTestId("points-row-10");
+
+    await user.selectOptions(screen.getByLabelText("Sortierung"), "nachname");
+
+    expect(visibleRowOrder()).toEqual(["points-row-20", "points-row-30", "points-row-10"]);
+  });
+
+  it("re-sorts by Studiengang, then Nachname when chosen", async () => {
+    const user = userEvent.setup();
+    renderSortGrid();
+    await screen.findByTestId("points-row-10");
+
+    await user.selectOptions(screen.getByLabelText("Sortierung"), "course_nachname");
+
+    expect(visibleRowOrder()).toEqual(["points-row-20", "points-row-10", "points-row-30"]);
+  });
+
+  it("does not change the save payload, only the on-screen order", async () => {
+    const user = userEvent.setup();
+    const mock = renderSortGrid();
+    await screen.findByTestId("points-row-10");
+
+    await user.selectOptions(screen.getByLabelText("Sortierung"), "nachname");
+    // Sorting alone is a display-only change — it must not mark the form dirty on its own, so an
+    // actual edit is needed before "Speichern" is even enabled.
+    await user.click(screen.getByTestId("attended-20-absent"));
+    await user.click(screen.getByRole("button", { name: "Speichern" }));
+
+    await waitFor(() => {
+      const body = putBodyOf(mock);
+      expect(body.entries.map((row) => row.registration_id).sort((a, b) => a - b)).toEqual([
+        10, 20, 30,
+      ]);
+    });
+  });
+});
+
 describe("PointsEntryPage — server errors", () => {
   it("renders a 422's German messages verbatim", async () => {
     const user = userEvent.setup();

@@ -32,8 +32,46 @@ import { ConfirmDialog } from "../components/ConfirmDialog";
 import { ErrorList, SuccessNotice } from "../components/Messages";
 import { BONUS_MODE_OPTIONS } from "../grading/bonusMode";
 import { compareDecimalStrings, computeGradePreview } from "../grading/preview";
+import { compareGerman } from "../util/collation";
 import { EMPTY_DISPLAY, formatDecimal, parseDecimalInput } from "../util/format";
 import { parseRouteId } from "../util/id";
+
+/** The four orders offered for the on-page grid, mirroring the attendance-list panel's
+ * `AttendanceListSortOrder` (`RegistrationsPage.tsx`/`app/reports/attendance_list.py`)
+ * value-for-value so the same four choices mean the same thing everywhere in the app. Unlike
+ * that panel — which only governs a downloaded PDF — this reorders the rows shown on screen;
+ * `"matrikelnummer"` is the default because it matches the order `read_points_grid` already
+ * returns, so picking no order changes nothing about what an instructor who never touches this
+ * control sees. */
+type PointsGridSortOrder = "course_nachname" | "course_matrikelnummer" | "nachname" | "matrikelnummer";
+
+const POINTS_SORT_OPTIONS: { value: PointsGridSortOrder; label: string }[] = [
+  { value: "matrikelnummer", label: "Matrikelnummer" },
+  { value: "nachname", label: "Nachname" },
+  { value: "course_matrikelnummer", label: "Studiengang, dann Matrikelnummer" },
+  { value: "course_nachname", label: "Studiengang, dann Nachname" },
+];
+
+/** DIN 5007-1 collation (§6) on the fields the chosen order cares about, each with the same
+ * tiebreak chain the backend's `_sort_key` uses (course -> Nachname -> Vorname ->
+ * Matrikelnummer, trimmed to whichever prefix `order` asks for) so ties resolve deterministically
+ * rather than depending on the array's incoming order. */
+function compareRows(order: PointsGridSortOrder, a: EditableRow, b: EditableRow): number {
+  const comparators: Array<() => number> = [];
+  if (order === "course_nachname" || order === "course_matrikelnummer") {
+    comparators.push(() => compareGerman(a.courseCode, b.courseCode));
+  }
+  if (order === "course_nachname" || order === "nachname") {
+    comparators.push(() => compareGerman(a.nachname, b.nachname));
+    comparators.push(() => compareGerman(a.vorname, b.vorname));
+  }
+  comparators.push(() => compareGerman(a.matrikelnummer, b.matrikelnummer));
+  for (const compare of comparators) {
+    const result = compare();
+    if (result !== 0) return result;
+  }
+  return 0;
+}
 
 /**
  * The locally-editable form of one `PointsEntry`. `pointsText` always has an entry for every
@@ -172,6 +210,7 @@ export default function PointsEntryPage(): JSX.Element {
   );
 
   const [courseFilter, setCourseFilter] = useState("");
+  const [sortOrder, setSortOrder] = useState<PointsGridSortOrder>("matrikelnummer");
 
   const [showBulkAttendDialog, setShowBulkAttendDialog] = useState(false);
 
@@ -458,15 +497,14 @@ export default function PointsEntryPage(): JSX.Element {
     [rows],
   );
 
-  // Filtering only, never re-sorting: the server sorts the grid by Matrikelnummer
-  // (`read_points_grid`), which is *not* the same order as the §6 attendance list/RegistrationsPage
-  // (course, then Nachname, then Vorname, DIN 5007-1) — a client-side re-sort here would just
-  // substitute one order for another rather than have an authoritative source, so it stays as
-  // the server sent it.
-  const visibleRows = useMemo(
-    () => (courseFilter === "" ? rows : rows.filter((row) => row.courseCode === courseFilter)),
-    [rows, courseFilter],
-  );
+  // Filtered by course, then re-sorted per the instructor's chosen `sortOrder` (default
+  // "matrikelnummer", matching the order `read_points_grid` already returns so the default view
+  // is unchanged). This is a display-only order — `rows` itself, and therefore the save payload
+  // (`buildSavePayload` reads `rows`, not `visibleRows`), is untouched by it.
+  const visibleRows = useMemo(() => {
+    const filtered = courseFilter === "" ? rows : rows.filter((row) => row.courseCode === courseFilter);
+    return [...filtered].sort((a, b) => compareRows(sortOrder, a, b));
+  }, [rows, courseFilter, sortOrder]);
 
   // Scoped to the currently visible (filter-respecting) rows, same as the bulk action below —
   // a table-header bulk control acting on rows the instructor can't currently see would be
@@ -570,6 +608,21 @@ export default function PointsEntryPage(): JSX.Element {
             {courseCodes.map((code) => (
               <option key={code} value={code}>
                 {code}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label htmlFor="points-sort-order">Sortierung</label>
+          <select
+            id="points-sort-order"
+            className="medium"
+            value={sortOrder}
+            onChange={(event) => setSortOrder(event.target.value as PointsGridSortOrder)}
+          >
+            {POINTS_SORT_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
               </option>
             ))}
           </select>
