@@ -980,9 +980,22 @@ export interface ExamStatistics {
  * `GET /exams/{id}/statistics` — §9's live statistics. Deliberately **not** gated by the §8.1
  * completeness check (that gate is §10/§11 only): this is a view over grading in progress, and
  * the payload reports how many students are still incomplete rather than refusing to answer.
+ *
+ * `bonusPointsOverride`, when given, is the dashboard's "what if" bonus-points simulation: a
+ * canonical decimal string (see `util/format.ts::parseDecimalInput`) sent as the
+ * `bonus_points_override` query parameter. It never mutates the exam — the backend substitutes
+ * it only for this one response's grade computation (`docs/api-contract.md`'s §9 section) — so
+ * a subsequent call without it reproduces the real numbers.
  */
-export function getExamStatistics(examId: number): Promise<ExamStatistics> {
-  return request<ExamStatistics>(`/exams/${examId}/statistics`);
+export function getExamStatistics(
+  examId: number,
+  bonusPointsOverride?: string,
+): Promise<ExamStatistics> {
+  const query =
+    bonusPointsOverride === undefined
+      ? ""
+      : `?bonus_points_override=${encodeURIComponent(bonusPointsOverride)}`;
+  return request<ExamStatistics>(`/exams/${examId}/statistics${query}`);
 }
 
 /** `GET /exams/{id}/reports/internal` — the same statistics as a PDF (§9). */

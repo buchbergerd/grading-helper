@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type JSX } from "react";
+import { useCallback, useEffect, useRef, useState, type JSX } from "react";
 import { Link, useParams } from "react-router";
 
 import {
@@ -22,9 +22,10 @@ import {
   formatRate,
   type HistogramBarDatum,
 } from "../statistics/series";
+import { BONUS_SIMULATION_DEBOUNCE_MS, sliderPositionFor } from "../statistics/bonusSimulation";
 import { BackButton } from "../components/BackButton";
 import { ErrorList, SuccessNotice } from "../components/Messages";
-import { formatDateOrDash, formatDecimalOrDash } from "../util/format";
+import { formatDateOrDash, formatDecimal, formatDecimalOrDash, parseDecimalInput } from "../util/format";
 import { parseRouteId } from "../util/id";
 
 /** One of the four §10/§11 report downloads offered once the exam is export-ready. */
@@ -63,6 +64,34 @@ export default function ExamStatisticsPage(): JSX.Element {
   const [downloadingReport, setDownloadingReport] = useState<ReportDownloadKind | null>(null);
   const [reportDownloadMessages, setReportDownloadMessages] = useState<string[]>([]);
 
+  // The "what if" bonus-points simulation box. `bonusText` is the raw input-field text — the
+  // task's explicit requirement that this field is never bound-checked, so it is *not* clamped to
+  // the slider's 0-10 range before being sent. `simulatedStats` is a second, independent
+  // `ExamStatistics` payload (`?bonus_points_override=...`, see `api/client.ts`) that only the
+  // grade-distribution and total-points-histogram sections read from — every other section on
+  // this page keeps reading the real `stats` so KPIs never silently become hypothetical.
+  const [simulationEnabled, setSimulationEnabled] = useState(false);
+  const [bonusText, setBonusText] = useState("0");
+  // The slider's own displayed position — kept as separate state, not derived fresh from
+  // `bonusText` every render, so that typing an off-grid or out-of-range value (task requirement:
+  // the field is never bound-checked) leaves the thumb where it last was instead of jumping to a
+  // fallback. Only updated when `bonusText` actually lands exactly on one of the slider's stops.
+  const [sliderPosition, setSliderPosition] = useState("0");
+  const [simulatedStats, setSimulatedStats] = useState<ExamStatistics | null>(null);
+  // The canonical bonus value that actually produced `simulatedStats` — set together with it, in
+  // the same state update. Rendering labels from this instead of live-parsing `bonusText` avoids
+  // a heading that names a value the chart doesn't reflect yet: while `bonusText` is transiently
+  // unparseable (e.g. mid-typing "1,"), `simulatedStats` still holds the previous good payload,
+  // and the label must say what that payload was actually computed for, not what's in the field.
+  const [simulatedBonusCanonical, setSimulatedBonusCanonical] = useState<string | null>(null);
+  const [simulationMessages, setSimulationMessages] = useState<string[]>([]);
+  // Bumped on every keystroke/slider tick that starts a new debounced fetch; a resolving request
+  // only applies its result if it is still the most recent one requested. Debouncing alone only
+  // protects against firing too many requests, not against two in-flight ones resolving out of
+  // order (a slow response to an earlier value landing after a fast response to a later one) —
+  // this guards that too.
+  const simulationRequestId = useRef(0);
+
   const reload = useCallback(async () => {
     if (examId === null) {
       setMessages(["Ungültige Adresse."]);
@@ -99,6 +128,52 @@ export default function ExamStatisticsPage(): JSX.Element {
     void reload();
     void reloadCompleteness();
   }, [reload, reloadCompleteness]);
+
+  useEffect(() => {
+    const position = sliderPositionFor(bonusText);
+    if (position !== null) setSliderPosition(position);
+  }, [bonusText]);
+
+  useEffect(() => {
+    if (examId === null || !simulationEnabled) {
+      setSimulatedStats(null);
+      setSimulatedBonusCanonical(null);
+      setSimulationMessages([]);
+      return;
+    }
+    const canonical = parseDecimalInput(bonusText);
+    if (canonical === null) {
+      setSimulationMessages(['Ungültige Zahl — bitte z. B. "1,5" eingeben.']);
+      return;
+    }
+    setSimulationMessages([]);
+    const requestId = ++simulationRequestId.current;
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const result = await getExamStatistics(examId, canonical);
+          if (simulationRequestId.current === requestId) {
+            setSimulatedStats(result);
+            setSimulatedBonusCanonical(canonical);
+          }
+        } catch (error) {
+          if (simulationRequestId.current === requestId) setSimulationMessages(errorMessages(error));
+        }
+      })();
+    }, BONUS_SIMULATION_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [examId, simulationEnabled, bonusText]);
+
+  function onToggleSimulation(checked: boolean): void {
+    setSimulationEnabled(checked);
+    if (checked) {
+      setBonusText(exam?.bonus_points ?? "0");
+    } else {
+      setSimulatedStats(null);
+      setSimulatedBonusCanonical(null);
+      setSimulationMessages([]);
+    }
+  }
 
   /**
    * Shared by all four §10/§11 report buttons: blob -> `URL.createObjectURL` -> a temporary
@@ -163,6 +238,34 @@ export default function ExamStatisticsPage(): JSX.Element {
   }
 
   const series = buildStatisticsSeries(stats);
+
+  // Only the grade-distribution and total-points-histogram sections switch to the simulated
+  // payload — everything else on this page (KPIs, exercise histograms, the Versuch breakdown)
+  // keeps showing `stats`/`series`, the real numbers, unlabeled and untouched.
+  const usingSimulation =
+    simulationEnabled && simulatedStats !== null && simulatedBonusCanonical !== null;
+  const simulationSeries = simulatedStats !== null ? buildStatisticsSeries(simulatedStats) : null;
+  const activeGradeDistribution = usingSimulation
+    ? simulatedStats.grade_distribution
+    : stats.grade_distribution;
+  const activeGradeBars = usingSimulation && simulationSeries !== null
+    ? simulationSeries.gradeDistribution
+    : series.gradeDistribution;
+  const activeTotalPointsHistogram = usingSimulation
+    ? simulatedStats.total_points_histogram
+    : stats.total_points_histogram;
+  const activeTotalPointsBars = usingSimulation && simulationSeries !== null
+    ? simulationSeries.totalPointsHistogram
+    : series.totalPointsHistogram;
+  const activeThresholdBinLabel = usingSimulation && simulationSeries !== null
+    ? simulationSeries.totalPointsThresholdBinLabel
+    : series.totalPointsThresholdBinLabel;
+  const activePassingThreshold = usingSimulation
+    ? simulatedStats.passing_threshold
+    : stats.passing_threshold;
+  const simulationTitleSuffix = usingSimulation
+    ? ` — Simulation (${formatDecimal(simulatedBonusCanonical)} Bonuspunkte)`
+    : "";
 
   // The four §10/§11 buttons stay visible even when the exam isn't export-ready yet — greyed
   // out rather than hidden, so instructors always know the reports exist and what's blocking them.
@@ -384,16 +487,78 @@ export default function ExamStatisticsPage(): JSX.Element {
         </div>
       </div>
 
+      {/* ------------------------------------------------------ Simulation: Bonuspunkte (§9) */}
+      <div className="panel" data-testid="bonus-simulation-panel">
+        <h2 style={{ marginTop: 0 }}>Simulation: Bonuspunkte</h2>
+        <label htmlFor="simulation-toggle" style={{ display: "inline", fontWeight: "normal" }}>
+          <input
+            id="simulation-toggle"
+            type="checkbox"
+            checked={simulationEnabled}
+            onChange={(event) => onToggleSimulation(event.target.checked)}
+            data-testid="simulation-toggle"
+          />{" "}
+          Was wäre, wenn ich Bonuspunkte vergebe? Notenverteilung und Gesamtpunkte-Histogramm
+          unten zeigen dann die Simulation statt der aktuellen Werte.
+        </label>
+        {simulationEnabled ? (
+          <div className="simulation-box" data-testid="simulation-box">
+            <label htmlFor="simulation-bonus-input" style={{ display: "inline" }}>
+              Bonuspunkte:{" "}
+              <input
+                id="simulation-bonus-input"
+                className="narrow"
+                type="text"
+                inputMode="decimal"
+                value={bonusText}
+                onChange={(event) => setBonusText(event.target.value)}
+                data-testid="simulation-bonus-input"
+              />
+            </label>
+            <input
+              type="range"
+              min="0"
+              max="10"
+              step="0.5"
+              value={sliderPosition}
+              onChange={(event) => setBonusText(event.target.value)}
+              aria-label="Bonuspunkte (Schieberegler, 0 bis 10)"
+              data-testid="simulation-bonus-slider"
+              style={{ display: "block", width: "100%", maxWidth: "24rem", margin: "0.5rem 0" }}
+            />
+            <ErrorList messages={simulationMessages} />
+            {stats.bonus_mode === "ONLY_IF_PASSING_WITHOUT_BONUS" ? (
+              <p className="muted small" data-testid="simulation-bonus-mode-note">
+                Hinweis: In diesem Bonus-Modus profitieren nur Studierende, die auch ohne Bonus
+                bereits bestanden hätten — ein simulierter Bonus rettet niemanden, der ohne Bonus
+                durchgefallen wäre.
+              </p>
+            ) : null}
+            {usingSimulation ? (
+              <p data-testid="simulation-would-pass">
+                Bei <strong>{formatDecimal(simulatedBonusCanonical)}</strong> Bonuspunkten
+                würden <strong>{simulatedStats.counts.passed}</strong> von{" "}
+                <strong>{simulatedStats.counts.graded}</strong> Studierenden bestehen{" "}
+                <span className="muted small">
+                  (aktuell {stats.counts.passed} von {stats.counts.graded})
+                </span>
+                .
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+
       {/* -------------------------------------------------------------------- Notenverteilung */}
       <div className="panel">
-        <h2 style={{ marginTop: 0 }}>Notenverteilung</h2>
-        <GradeDistributionChart data={series.gradeDistribution} />
+        <h2 style={{ marginTop: 0 }}>Notenverteilung{simulationTitleSuffix}</h2>
+        <GradeDistributionChart data={activeGradeBars} />
         <p data-testid="grade-summary">
-          Mittelwert: <strong>{formatDecimalOrDash(stats.grade_distribution.mean)}</strong>,
-          Median: <strong>{formatDecimalOrDash(stats.grade_distribution.median)}</strong>{" "}
+          Mittelwert: <strong>{formatDecimalOrDash(activeGradeDistribution.mean)}</strong>,
+          Median: <strong>{formatDecimalOrDash(activeGradeDistribution.median)}</strong>{" "}
           <span className="muted small">
-            (über {stats.grade_distribution.numeric_count}{" "}
-            {stats.grade_distribution.numeric_count === 1
+            (über {activeGradeDistribution.numeric_count}{" "}
+            {activeGradeDistribution.numeric_count === 1
               ? "Studierenden mit einer numerischen Note"
               : "Studierende mit einer numerischen Note"}
             )
@@ -412,7 +577,7 @@ export default function ExamStatisticsPage(): JSX.Element {
               </tr>
             </thead>
             <tbody>
-              {series.gradeDistribution.map((entry) => (
+              {activeGradeBars.map((entry) => (
                 <tr key={entry.label} data-testid={`grade-row-${entry.label}`}>
                   <th scope="row">{entry.label}</th>
                   <td className="numeric">{entry.count}</td>
@@ -425,12 +590,12 @@ export default function ExamStatisticsPage(): JSX.Element {
 
       {/* ------------------------------------------------------------ Histogramm Gesamtpunkte */}
       <HistogramSection
-        title="Histogramm der Gesamtpunkte"
-        maxObserved={stats.total_points_histogram.max_observed}
-        includedCount={stats.total_points_histogram.included_count}
-        bars={series.totalPointsHistogram}
-        thresholdBinLabel={series.totalPointsThresholdBinLabel}
-        passingThreshold={stats.passing_threshold}
+        title={`Histogramm der Gesamtpunkte${simulationTitleSuffix}`}
+        maxObserved={activeTotalPointsHistogram.max_observed}
+        includedCount={activeTotalPointsHistogram.included_count}
+        bars={activeTotalPointsBars}
+        thresholdBinLabel={activeThresholdBinLabel}
+        passingThreshold={activePassingThreshold}
         testIdPrefix="total-points-histogram"
       />
 

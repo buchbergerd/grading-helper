@@ -21,13 +21,23 @@ immediately, useful while grading is still in progress", so an exam that is half
 administrator asking for another instructor's exam gets the same ``404`` as any other
 non-owner — §3's least-privilege default, restated in §9 ("visible only to the exam's owner
 (and, per §3, not to admins by default)").
+
+The ``bonus_points_override`` query parameter is the dashboard's "what if" bonus-points
+simulation. It never touches the database: :func:`~app.statistics.build_exam_statistics` only
+substitutes the value into its own in-memory grade computation for this one call, so the exam's
+stored ``bonus_points`` — and the §8.1 recomputation warning that guards *actually* changing it
+(``app/api/exams.py::update_exam``) — are untouched. Omitting it (or passing ``None``) reproduces
+the exam's real, persisted numbers exactly as before this parameter existed.
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from typing import Annotated
+
+from fastapi import APIRouter, Query
 
 from app.api.exams import get_owned_exam
+from app.api.schemas import DecimalString
 from app.auth.dependencies import CurrentUser, DbSession
 from app.statistics import ExamStatistics, build_exam_statistics
 
@@ -35,8 +45,13 @@ router = APIRouter(tags=["statistics"])
 
 
 @router.get("/exams/{exam_id}/statistics", response_model=None)
-def exam_statistics(exam_id: int, user: CurrentUser, db: DbSession) -> ExamStatistics:
-    """The exam's §9 statistics, live.
+def exam_statistics(
+    exam_id: int,
+    user: CurrentUser,
+    db: DbSession,
+    bonus_points_override: Annotated[DecimalString | None, Query()] = None,
+) -> ExamStatistics:
+    """The exam's §9 statistics, live — or, with ``bonus_points_override``, a what-if simulation.
 
     ``response_model=None`` is deliberate. :class:`~app.statistics.ExamStatistics` is already
     exactly the wire shape — every decimal in it is a canonical string, by construction — so
@@ -46,9 +61,15 @@ def exam_statistics(exam_id: int, user: CurrentUser, db: DbSession) -> ExamStati
     is where the shape is enforced, and its tests assert that no ``float`` appears anywhere in the
     payload.
 
+    ``bonus_points_override`` reuses :data:`~app.api.schemas.DecimalString` even though this is a
+    query parameter, not a request body — it is a FastAPI/pydantic field either way, so the same
+    §7.0 rule applies (reject a JSON number's binary-double heritage, reject exponent notation,
+    reject non-finite values) via the same validator, rather than a second, looser parser for
+    query strings. A malformed value is therefore a ``422`` like any other decimal field.
+
     Declared ``def`` rather than ``async def``: the computation is blocking CPU work over the
     exam's registrations, so FastAPI should run it in a worker thread rather than on the event
     loop.
     """
     exam = get_owned_exam(db, user, exam_id)
-    return build_exam_statistics(exam)
+    return build_exam_statistics(exam, bonus_points_override=bonus_points_override)

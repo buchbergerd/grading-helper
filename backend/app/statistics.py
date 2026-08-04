@@ -713,6 +713,7 @@ def build_exam_statistics(
     now: datetime | None = None,
     total_points_bin_width: Decimal = TOTAL_POINTS_BIN_WIDTH,
     exercise_bin_width: Decimal = EXERCISE_BIN_WIDTH,
+    bonus_points_override: Decimal | None = None,
 ) -> ExamStatistics:
     """Build §9's full statistics payload for one exam — see this module's docstring.
 
@@ -729,11 +730,28 @@ def build_exam_statistics(
     nothing missing from the student's data, so neither of those would be true. It is a bucket of
     its own precisely so the five buckets still partition ``counts.registered``; an instructor who
     enters points before configuring the schema must not watch students disappear from the counts.
+
+    ``bonus_points_override``, when given, replaces ``exam.bonus_points`` for every registration's
+    grade computation — a "what if the bonus were X" simulation (§9's dashboard). ``exam`` itself,
+    and therefore the database, is never written to: the override lives only in this call's local
+    ``_classify`` calls, exactly the read-only path ``app.api.statistics`` uses. Everything that
+    does not depend on the bonus (attendance counts, exercise histograms, ``versuch_breakdown``'s
+    ``registered``/``attended``/``incomplete``/``awaiting_schema``) comes out identical to a call
+    without the override; only grade-derived numbers — ``grade_distribution``,
+    ``total_points_histogram``, ``passing_threshold_bin_index``, the ``passed``/``failed`` splits —
+    move. Under ``BONUS_MODE_ONLY_IF_PASSING_WITHOUT_BONUS`` (§7.3), raising this can still leave a
+    failing student failing: that mode checks ``raw_total`` alone against the 4.0 threshold before
+    bonus is even considered, so it is not "cap the final grade at pass" and a simulated increase
+    does not rescue a student who was failing without bonus. Callers that surface this to an
+    instructor should say so rather than let a static pass count look like a bug.
     """
     exercises = list(exam.exercises)  # already position-ordered (Exam.exercises' relationship).
     exercise_ids = [exercise.id for exercise in exercises]
     max_points = sum((exercise.max_points for exercise in exercises), Decimal(0))
     thresholds = _thresholds_or_none(exam)
+    bonus_points = (
+        exam.bonus_points if bonus_points_override is None else bonus_points_override
+    )
 
     all_registrations = list(exam.registrations)
     registrations = [
@@ -743,7 +761,7 @@ def build_exam_statistics(
 
     outcomes = [
         _classify(
-            registration, exercise_ids, thresholds, max_points, exam.bonus_mode, exam.bonus_points
+            registration, exercise_ids, thresholds, max_points, exam.bonus_mode, bonus_points
         )
         for registration in registrations
     ]

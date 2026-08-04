@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router";
@@ -720,5 +720,158 @@ describe("ExamStatisticsPage — charts actually render", () => {
 
     expect(container.querySelectorAll(".recharts-reference-line-line").length).toBe(0);
     expect(screen.queryByText("Bestehensgrenze")).toBeNull();
+  });
+});
+
+describe("ExamStatisticsPage — bonus-points simulation", () => {
+  /**
+   * A plausible "backend response for a bumped bonus": the failing student at grade "4.0"
+   * (count 1) moves to a better grade — modelled here simply as more students landing on "4.0"
+   * from below, i.e. 3 instead of 1 — which is all this suite needs to prove the page swapped to
+   * a different payload; the exact arithmetic is `app/statistics.py`'s job, covered by
+   * `tests/test_statistics_api.py::test_bonus_points_override_changes_grade_derived_numbers_without_persisting`.
+   */
+  const STATS_SIMULATED: ExamStatistics = {
+    ...STATS,
+    counts: { ...STATS.counts, passed: 30, failed: 3 },
+    rates: {
+      ...STATS.rates,
+      passing: { numerator: 30, denominator: 33, percent: "90.9" },
+      failure: { numerator: 3, denominator: 33, percent: "9.1" },
+    },
+    grade_distribution: {
+      ...STATS.grade_distribution,
+      numeric: STATS.grade_distribution.numeric.map((entry) =>
+        entry.grade === "4.0" ? { ...entry, count: 3 } : entry,
+      ),
+      numeric_count: 30,
+      failed_count: 3,
+      mean: "2.05",
+    },
+  };
+
+  /** Real numbers by default; the simulated payload only once a `bonus_points_override` query
+   * parameter is present — mirrors what the real backend route does (`app/api/statistics.py`). */
+  function simulationRoutes() {
+    return {
+      "/api/exams/7/statistics": (url: string) =>
+        url.includes("bonus_points_override=")
+          ? jsonResponse(200, STATS_SIMULATED)
+          : jsonResponse(200, STATS),
+    };
+  }
+
+  it("is off by default: the box is hidden and no override is requested", async () => {
+    const mock = renderPage(simulationRoutes());
+    await screen.findByTestId("grade-summary");
+
+    expect(screen.queryByTestId("simulation-box")).toBeNull();
+    expect(screen.getByTestId("grade-row-4,0").textContent).toContain("1");
+    const calledUrls = mock.mock.calls.map((call) => String(call[0]));
+    expect(calledUrls.some((url) => url.includes("bonus_points_override"))).toBe(false);
+  });
+
+  it("checking the box defaults the field to the exam's real bonus_points", async () => {
+    const user = userEvent.setup();
+    renderPage(simulationRoutes());
+    await screen.findByTestId("grade-summary");
+
+    await user.click(screen.getByTestId("simulation-toggle"));
+    const input = screen.getByTestId("simulation-bonus-input") as HTMLInputElement;
+    expect(input.value).toBe(EXAM.bonus_points);
+  });
+
+  it("typing a bonus value fetches the simulated payload and swaps only the two affected charts", async () => {
+    const user = userEvent.setup();
+    const mock = renderPage(simulationRoutes());
+    await screen.findByTestId("grade-summary");
+
+    await user.click(screen.getByTestId("simulation-toggle"));
+    const input = screen.getByTestId("simulation-bonus-input");
+    await user.clear(input);
+    await user.type(input, "10");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("grade-row-4,0").textContent).toContain("3");
+    });
+
+    const calledUrls = mock.mock.calls.map((call) => String(call[0]));
+    expect(
+      calledUrls.some((url) => url.includes("/exams/7/statistics?bonus_points_override=10")),
+    ).toBe(true);
+
+    // The heading says so, and the box states the pass-count comparison the task asks for.
+    expect(screen.getByText(/Notenverteilung — Simulation \(10 Bonuspunkte\)/)).not.toBeNull();
+    const wouldPass = screen.getByTestId("simulation-would-pass");
+    expect(wouldPass.textContent).toContain("30");
+    expect(wouldPass.textContent).toContain("aktuell 28 von 33");
+
+    // KPIs and rates stay on the real numbers — only Notenverteilung/Gesamtpunkte simulate.
+    expect(screen.getByTestId("kpi-graded").textContent).toContain("33");
+    expect(screen.getByTestId("rate-passing").textContent).toContain("84,8 % (28 von 33)");
+  });
+
+  it("does not bound-check the input field: an out-of-slider-range value is still sent as typed", async () => {
+    const user = userEvent.setup();
+    const mock = renderPage(simulationRoutes());
+    await screen.findByTestId("grade-summary");
+
+    await user.click(screen.getByTestId("simulation-toggle"));
+    const input = screen.getByTestId("simulation-bonus-input");
+    await user.clear(input);
+    await user.type(input, "25");
+
+    await waitFor(() => {
+      const calledUrls = mock.mock.calls.map((call) => String(call[0]));
+      expect(calledUrls.some((url) => url.includes("bonus_points_override=25"))).toBe(true);
+    });
+  });
+
+  it("moving the slider writes its value into the text field", async () => {
+    renderPage(simulationRoutes());
+    await screen.findByTestId("grade-summary");
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("simulation-toggle"));
+    const slider = screen.getByTestId("simulation-bonus-slider");
+    fireEvent.change(slider, { target: { value: "3.5" } });
+
+    const input = screen.getByTestId("simulation-bonus-input") as HTMLInputElement;
+    expect(input.value).toBe("3.5");
+  });
+
+  it("unchecking the box reverts the charts to the real numbers", async () => {
+    const user = userEvent.setup();
+    renderPage(simulationRoutes());
+    await screen.findByTestId("grade-summary");
+
+    await user.click(screen.getByTestId("simulation-toggle"));
+    const input = screen.getByTestId("simulation-bonus-input");
+    await user.clear(input);
+    await user.type(input, "10");
+    await waitFor(() => {
+      expect(screen.getByTestId("grade-row-4,0").textContent).toContain("3");
+    });
+
+    await user.click(screen.getByTestId("simulation-toggle"));
+    expect(screen.queryByTestId("simulation-box")).toBeNull();
+    expect(screen.getByTestId("grade-row-4,0").textContent).toContain("1");
+  });
+
+  it("shows a hint that ONLY_IF_PASSING_WITHOUT_BONUS does not rescue an already-failing student", async () => {
+    const user = userEvent.setup();
+    renderPage({
+      ...simulationRoutes(),
+      "/api/exams/7": () => jsonResponse(200, { ...EXAM, bonus_mode: "ONLY_IF_PASSING_WITHOUT_BONUS" }),
+      "/api/exams/7/statistics": (url: string) =>
+        jsonResponse(200, {
+          ...(url.includes("bonus_points_override") ? STATS_SIMULATED : STATS),
+          bonus_mode: "ONLY_IF_PASSING_WITHOUT_BONUS",
+        }),
+    });
+    await screen.findByTestId("grade-summary");
+
+    await user.click(screen.getByTestId("simulation-toggle"));
+    expect(screen.getByTestId("simulation-bonus-mode-note")).not.toBeNull();
   });
 });

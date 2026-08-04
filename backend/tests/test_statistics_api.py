@@ -361,6 +361,92 @@ def test_histogram_range_covers_a_bonus_above_max_points(
 
 
 # --------------------------------------------------------------------------------------------
+# The what-if bonus-points simulation (§9 dashboard, ``bonus_points_override``)
+# --------------------------------------------------------------------------------------------
+
+
+def test_bonus_points_override_changes_grade_derived_numbers_without_persisting(
+    instructor_client: TestClient, populated_exam: int
+) -> None:
+    """The dashboard's "what if" simulation must move grade-derived numbers but touch nothing.
+
+    ``populated_exam`` has a real ``bonus_points`` of 5 (ALWAYS) and a failing student sitting at
+    raw 22/60 (passing threshold 30 at 50 %) — 27 with the real bonus, still short. Overriding to
+    30 pushes that student to 52 and across the line, which is the visible "how many would pass"
+    change §9 asks for. The override must never survive past the one request it was sent on: a
+    follow-up call with no override reproduces the original payload exactly, and the exam's own
+    stored ``bonus_points`` — read back independently through ``/api/exams`` — must still be "5".
+    """
+    baseline = instructor_client.get(f"/api/exams/{populated_exam}/statistics").json()
+    assert baseline["counts"]["failed"] >= 1, "fixture must have a failing student"
+
+    simulated = instructor_client.get(
+        f"/api/exams/{populated_exam}/statistics",
+        params={"bonus_points_override": "30"},
+    )
+    assert simulated.status_code == 200, simulated.text
+    simulated_stats = simulated.json()
+
+    assert simulated_stats["counts"]["passed"] > baseline["counts"]["passed"]
+    assert simulated_stats["counts"]["failed"] < baseline["counts"]["failed"]
+    # Attendance-only figures must not move — only grade-derived numbers depend on the override.
+    assert simulated_stats["counts"]["registered"] == baseline["counts"]["registered"]
+    assert simulated_stats["counts"]["attended"] == baseline["counts"]["attended"]
+    assert simulated_stats["counts"]["incomplete"] == baseline["counts"]["incomplete"]
+
+    replayed = instructor_client.get(f"/api/exams/{populated_exam}/statistics").json()
+    assert replayed == baseline, "a simulated request must leave the real numbers unchanged"
+
+    exam = instructor_client.get(f"/api/exams/{populated_exam}").json()
+    assert exam["bonus_points"] == "5", "the override must never reach the stored exam"
+
+
+def test_bonus_points_override_does_not_rescue_a_student_failing_without_bonus(
+    instructor_client: TestClient, lecture_id: int
+) -> None:
+    """§7.3's ``ONLY_IF_PASSING_WITHOUT_BONUS`` checks ``raw_total`` alone first.
+
+    A student below the passing threshold on raw points stays failed no matter how large a
+    simulated bonus is — bonus only ever helps a student who was already passing without it. A
+    "what if" UI that didn't account for this would look broken (or, worse, mislead an instructor
+    into thinking a large bonus rescues every failing student under this mode).
+    """
+    exam = create_exam(
+        instructor_client, lecture_id, bonus_mode="ONLY_IF_PASSING_WITHOUT_BONUS", bonus_points="0"
+    )
+    exam_id = int(exam["id"])
+    first, second = (int(e["id"]) for e in exam["exercises"])
+
+    failing = add_student(instructor_client, exam_id, "10000009")
+    put_points(
+        instructor_client,
+        int(failing["id"]),
+        attended=True,
+        points={str(first): "10", str(second): "10"},
+    )
+
+    simulated = instructor_client.get(
+        f"/api/exams/{exam_id}/statistics", params={"bonus_points_override": "100"}
+    ).json()
+
+    assert simulated["counts"]["passed"] == 0
+    assert simulated["counts"]["failed"] == 1
+    assert simulated["grade_distribution"]["failed_count"] == 1
+
+
+@pytest.mark.parametrize("value", ["abc", "", "1e2", "NaN", "Infinity"])
+def test_bonus_points_override_rejects_malformed_values(
+    instructor_client: TestClient, populated_exam: int, value: str
+) -> None:
+    """A malformed simulation input is a clean ``422``, never a ``500`` (§7.0's decimal rules
+    apply to this query parameter exactly as they do to a JSON body field)."""
+    response = instructor_client.get(
+        f"/api/exams/{populated_exam}/statistics", params={"bonus_points_override": value}
+    )
+    assert response.status_code == 422, response.text
+
+
+# --------------------------------------------------------------------------------------------
 # §9's two access rules
 # --------------------------------------------------------------------------------------------
 

@@ -269,12 +269,26 @@ Owner-scoped like every other exam route: a non-owner — **including an admin**
 
 | Method | Path | Response |
 |---|---|---|
-| GET | `/api/exams/{id}/statistics` | `200` + `ExamStatistics` (below) |
+| GET | `/api/exams/{id}/statistics?bonus_points_override=<decimal>` | `200` + `ExamStatistics` (below) |
 | GET | `/api/exams/{id}/reports/internal` | `200 application/pdf` + `Content-Disposition`, same header convention as the attendance list |
 
 **Neither route is gated by the §8.1 completeness check.** That gate is for the §10/§11 exports
 only. §9 is explicitly a live view over grading in progress, so a half-graded exam gets a `200`
 that reports how much is still missing — never a `409`.
+
+`bonus_points_override` (optional, JSON-route only — the PDF route does not accept it) is the
+dashboard's "what if the bonus were X" simulation: a decimal string with the same §7.0 rules as
+any other decimal field (reject a JSON number, exponent notation, non-finite values — a malformed
+value is `422`, not `500`). When present, `build_exam_statistics` substitutes it for the exam's
+real `bonus_points` for that one call only — **nothing is written to the database**, the exam's
+own `bonus_points` and its §8.1 recomputation warning are untouched, and a follow-up request
+without the parameter reproduces the real numbers exactly. Only grade-derived fields move
+(`grade_distribution`, `total_points_histogram`, `passing_threshold_bin_index`,
+`counts`/`rates`' `passed`/`failed`/`passing`/`failure`, `versuch_breakdown`'s `passed`/`failed`);
+attendance-only figures (`registered`, `attended`, `incomplete`, `awaiting_schema`, …) are
+unaffected. Under `bonus_mode = "ONLY_IF_PASSING_WITHOUT_BONUS"` (§7.3), a large override still
+will not move a student who was failing on `raw_total` alone — that mode never applies bonus to
+such a student, simulated or not.
 
 Both routes serve the output of one function, `app/statistics.py::build_exam_statistics`, which
 §9 requires to be the single source of these numbers so the PDF and the dashboard can never
