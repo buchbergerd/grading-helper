@@ -2,6 +2,7 @@
 // vite's own defineConfig would reject it under tsconfig.node.json's strict check.
 import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
+import { version as appVersion } from './package.json' with { type: 'json' }
 
 // Dev server proxies /api to the FastAPI backend so the browser sees a single origin.
 // This deliberately mirrors the production deployment (§13: one container behind the
@@ -9,6 +10,10 @@ import react from '@vitejs/plugin-react'
 // need a credentialed CORS configuration.
 export default defineConfig({
   plugins: [react()],
+  // Baked into the bundle at build time, not fetched at runtime — see src/components/Footer.tsx.
+  define: {
+    __APP_VERSION__: JSON.stringify(appVersion),
+  },
   server: {
     port: 5173,
     proxy: {

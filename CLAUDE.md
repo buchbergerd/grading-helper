@@ -74,6 +74,13 @@ script. The §9 report tests need it; without it they fail with a message naming
 The Docker image runs the same script as a build step. **Nothing downloads anything at runtime**
 (§13).
 
+## Versioning
+
+Bump the version (`backend/pyproject.toml` and `frontend/package.json`, kept equal — see
+`README.md`'s Versioning section for the MAJOR/MINOR/PATCH rule and what's exempt) **in the same
+commit** as the change it describes, before committing — don't wait to be asked each time.
+`backend/tests/test_versioning.py` catches the two files drifting apart, not a forgotten bump.
+
 ## Invariants — violate these silently and the bug won't show up until grading is wrong
 
 These are called out because the spec explicitly flags them as the likely failure modes for an

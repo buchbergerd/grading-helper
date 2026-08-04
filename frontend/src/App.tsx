@@ -2,6 +2,7 @@ import type { JSX } from "react";
 import { Link, NavLink, Outlet, Route, Routes, useNavigate } from "react-router";
 
 import { RequireAdmin, RequireAuth, useAuth } from "./auth/AuthContext";
+import Footer from "./components/Footer";
 import AdminUsersPage from "./pages/AdminUsersPage";
 import ChangePasswordPage from "./pages/ChangePasswordPage";
 import ExamDetailPage from "./pages/ExamDetailPage";
@@ -53,35 +54,41 @@ function Layout(): JSX.Element {
 
 export default function App(): JSX.Element {
   return (
-    <Routes>
-      <Route path="/login" element={<LoginPage />} />
-      <Route path="/register" element={<RegisterPage />} />
-      {/* §3's share-link exception: no session, so this stays outside <RequireAuth>/<Layout>. */}
-      <Route path="/geteilt/statistik/:token" element={<SharedStatisticsPage />} />
-      <Route
-        element={
-          <RequireAuth>
-            <Layout />
-          </RequireAuth>
-        }
-      >
-        <Route path="/" element={<LectureListPage />} />
-        <Route path="/vorlesungen/:lectureId" element={<LectureDetailPage />} />
-        <Route path="/klausuren/:examId" element={<ExamDetailPage />} />
-        <Route path="/klausuren/:examId/anmeldungen" element={<RegistrationsPage />} />
-        <Route path="/klausuren/:examId/punkte" element={<PointsEntryPage />} />
-        <Route path="/klausuren/:examId/statistik" element={<ExamStatisticsPage />} />
-        <Route path="/passwort" element={<ChangePasswordPage />} />
+    <>
+      {/* Sibling of <Routes>, not inside <Layout> — <Layout> only wraps the <RequireAuth>
+          subtree, and the version footer needs to show on /login, /register, the share-link
+          page, and 404 too. */}
+      <Routes>
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="/register" element={<RegisterPage />} />
+        {/* §3's share-link exception: no session, so this stays outside <RequireAuth>/<Layout>. */}
+        <Route path="/geteilt/statistik/:token" element={<SharedStatisticsPage />} />
         <Route
-          path="/admin/benutzer"
           element={
-            <RequireAdmin>
-              <AdminUsersPage />
-            </RequireAdmin>
+            <RequireAuth>
+              <Layout />
+            </RequireAuth>
           }
-        />
-      </Route>
-      <Route path="*" element={<NotFoundPage />} />
-    </Routes>
+        >
+          <Route path="/" element={<LectureListPage />} />
+          <Route path="/vorlesungen/:lectureId" element={<LectureDetailPage />} />
+          <Route path="/klausuren/:examId" element={<ExamDetailPage />} />
+          <Route path="/klausuren/:examId/anmeldungen" element={<RegistrationsPage />} />
+          <Route path="/klausuren/:examId/punkte" element={<PointsEntryPage />} />
+          <Route path="/klausuren/:examId/statistik" element={<ExamStatisticsPage />} />
+          <Route path="/passwort" element={<ChangePasswordPage />} />
+          <Route
+            path="/admin/benutzer"
+            element={
+              <RequireAdmin>
+                <AdminUsersPage />
+              </RequireAdmin>
+            }
+          />
+        </Route>
+        <Route path="*" element={<NotFoundPage />} />
+      </Routes>
+      <Footer />
+    </>
   );
 }

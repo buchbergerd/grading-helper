@@ -38,6 +38,14 @@ body {
   background: var(--bg);
 }
 
+/* Pins the version footer to the viewport bottom on short pages (login, 404, an empty list)
+   instead of letting it float mid-page — #root is App's mount point (index.html). */
+#root {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
 h1,
 h2,
 h3 {
@@ -115,6 +123,23 @@ a {
   display: flex;
   gap: 0.75rem;
   align-items: baseline;
+}
+
+.app-footer {
+  /* Flexbox auto-margin trick: pushes the footer to the bottom of #root's flex column
+     regardless of how tall the preceding content is (login/404/an empty list are all shorter
+     than the viewport) without every page needing its own `flex: 1 0 auto` opt-in. */
+  margin-top: auto;
+  border-top: 1px solid var(--border);
+  background: var(--bg-soft);
+}
+
+.app-footer-inner {
+  max-width: 74rem;
+  margin: 0 auto;
+  padding: 0.75rem 1rem;
+  color: var(--fg-muted);
+  font-size: 0.8rem;
 }
 
 .breadcrumb-row {

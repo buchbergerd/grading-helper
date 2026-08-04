@@ -84,6 +84,26 @@ docker compose -f deploy/docker-compose.yml up -d
 docker compose -f deploy/docker-compose.yml exec app python scripts/create_admin.py --username <name>
 ```
 
+## Versioning
+
+One [semantic version](https://semver.org/) (`MAJOR.MINOR.PATCH`) for the whole app — frontend
+and backend ship as a single deployable unit (`deploy/Dockerfile`), not as independently
+versioned packages. `backend/pyproject.toml` and `frontend/package.json` must carry the same
+`version`; bump both together. The frontend footer displays its own copy, baked into the bundle
+at build time from `frontend/package.json` (`frontend/vite.config.ts`'s `define`) — see
+`frontend/src/components/Footer.tsx`.
+
+Bump `MAJOR` for a breaking change to the deployed data (a migration an operator must plan
+around) or to `docs/api-contract.md`, `MINOR` for a backward-compatible feature, `PATCH` for a
+fix with no behavior change to the contract.
+
+Bump in the same commit as the change it describes — don't batch several commits' worth of
+change under one bump, and don't wait for a separate "release" commit; there isn't one, since
+main is always deployable. Skip the bump for commits with no user-visible or contract effect
+(docs, comments, test-only changes, dependency bumps with no behavior change).
+`backend/tests/test_versioning.py` enforces that the two files agree; nothing enforces that a
+given commit remembered to bump at all — that's on whoever (or whatever) is committing.
+
 ## Data sensitivity
 
 Exam data includes real students' names and Matrikelnummern. Test fixtures in `test_data/`
