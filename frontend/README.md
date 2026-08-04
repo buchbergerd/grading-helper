@@ -3,8 +3,10 @@
 React + Vite + TypeScript. See `/SPECIFICATION.md` for the full spec and `/CLAUDE.md` for the
 invariants an implementation must not violate.
 
-Status: milestone 1 (§15.1) — login, Lecture/Exam CRUD, admin account management. Points entry
-(§8), reports (§9–§11) and the interactive dashboard (§9) are later milestones.
+Status: all of §15's milestones 1–6 are implemented — login, Lecture/Exam CRUD, admin account
+management, registration-PDF import, points/attendance entry, the §9 interactive statistics
+dashboard (with a what-if bonus-points simulation), and the §10/§11 report-download UI. See the
+repo-root `README.md` and `CLAUDE.md` for current status.
 
 ## Layout
 
@@ -13,9 +15,10 @@ frontend/
 ├── src/
 │   ├── api/client.ts      # typed client for the FastAPI backend (docs/api-contract.md)
 │   ├── auth/              # AuthContext, RequireAuth / RequireAdmin route guards
-│   ├── pages/             # Login, Lecture list/detail, Exam detail, Admin users, ...
+│   ├── pages/             # Login, Lecture list/detail, Exam detail, Points entry, Statistics, Admin users, ...
 │   ├── components/        # shared message rendering, confirm dialog
 │   ├── grading/preview.ts # the ONLY arithmetic module — see the decimal rule below
+│   ├── statistics/series.ts # §9 payload -> chart/table series transforms (Recharts)
 │   ├── util/format.ts     # German number/date formatting (§14 #6)
 │   └── index.css          # one plain stylesheet
 ├── vite.config.ts         # dev proxy /api -> :8000, vitest config
@@ -42,12 +45,6 @@ Consequences, all enforced by tests:
 - `Number()` appears exactly once, in `src/util/id.ts`, for route ids (integers, not decimals).
   `grep -rnE "Number\(|parseFloat|parseInt|valueAsNumber|toFixed" src/` should return only that
   file and comments.
-
-## Deferred decisions
-
-- **Charting library** for the interactive internal-report dashboard (§9): spec explicitly leaves
-  this open (e.g. Chart.js / Recharts / Plotly) — decide and pin when building that page, not
-  before. Not in `package.json` yet.
 
 ## Commands
 

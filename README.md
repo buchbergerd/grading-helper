@@ -7,10 +7,13 @@ statistics report, examination-office report, and student results report (PDF/Ex
 
 All UI text and generated documents are in German; this repo's own docs are in English.
 
-**Status: milestone 1 of `SPECIFICATION.md` §15 complete** — data model, authentication and
-accounts, Lecture/Exam CRUD, and a minimal React UI over them. Next up is §15.2: registration-PDF
-import and the attendance list. Nothing in §5–§11 (PDF import, points entry, grading engine,
-reports) exists yet.
+**Status: milestones 1–6 of `SPECIFICATION.md` §15 complete** — the full app, backend and
+frontend: data model, auth/accounts, Lecture/Exam CRUD, registration-PDF import, the attendance
+list, the grading engine, points/attendance entry, the §9 internal statistics report (PDF +
+interactive dashboard), the §10/§11 examination-office and student-results reports, exam-settings
+copy-forward, in-app exam deletion, and a real Docker deployment (`deploy/`, `docs/deployment.md`).
+No open implementation work is tracked against §15 right now — see `docs/open-questions.md` for
+anything that surfaces before adding new scope.
 
 ## Start here
 
@@ -23,6 +26,8 @@ reports) exists yet.
   assumptions/risks (§14) plus anything new found during implementation.
 - [`docs/api-contract.md`](docs/api-contract.md) — the HTTP contract between backend and
   frontend, written before the code so the two sides agree without reading each other.
+- [`docs/deployment.md`](docs/deployment.md) — the operator runbook: build, first boot, admin
+  bootstrap, backups, reverse-proxy config.
 
 ## Stack
 
@@ -46,7 +51,7 @@ See `SPECIFICATION.md` §12 for the full rationale behind each choice.
 ├── CLAUDE.md          # agent-facing invariants and pointers
 ├── backend/           # FastAPI app (see backend/README.md)
 ├── frontend/          # React app (see frontend/README.md)
-├── deploy/            # Dockerfile/compose skeletons (see deploy/README.md)
+├── deploy/            # real Dockerfile/compose for production (see deploy/README.md)
 ├── docs/              # open-questions register, ADRs as they accumulate
 ├── scripts/           # dev/test tooling, e.g. the synthetic PDF fixture generator
 └── test_data/         # anonymized/synthetic registration-PDF fixtures only
@@ -66,6 +71,18 @@ cd frontend && npm install && npm run dev
 ```
 
 Tests: `cd backend && uv run pytest` and `cd frontend && npm run test`.
+
+## Deploying
+
+For a real department deployment (not local dev), see [`docs/deployment.md`](docs/deployment.md)
+— it covers building/pulling the Docker image, first boot, admin bootstrap, backups, and
+reverse-proxy configuration. Short version:
+
+```
+docker compose -f deploy/docker-compose.yml build
+docker compose -f deploy/docker-compose.yml up -d
+docker compose -f deploy/docker-compose.yml exec app python scripts/create_admin.py --username <name>
+```
 
 ## Data sensitivity
 

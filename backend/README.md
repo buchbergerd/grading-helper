@@ -1,29 +1,36 @@
 # GradingHelper backend
 
-FastAPI service. Not implemented yet — see `/SPECIFICATION.md` (repo root) for the full spec and
-`/CLAUDE.md` for the invariants an implementation must not violate.
+FastAPI service — see `/SPECIFICATION.md` (repo root) for the full spec and `/CLAUDE.md` for the
+invariants an implementation must not violate. All of §15's milestones 1–6 are implemented; see
+the repo-root `README.md` and `CLAUDE.md` for current status.
 
-## Intended layout
+## Layout
 
 ```
 backend/
 ├── app/
-│   ├── main.py              # FastAPI app instance, router registration
+│   ├── main.py              # FastAPI app instance, router registration, migrations on startup
 │   ├── models/               # SQLAlchemy models (User, Lecture, Exam, StudentRegistration, ...)
 │   ├── api/                  # route modules, one per resource
 │   ├── auth/                 # password hashing, session/token handling (§3)
 │   ├── grading/               # §7 grade computation engine — pure functions, Decimal only
 │   ├── pdf_import/            # §5 registration-PDF parsing (pdfplumber primary, PyMuPDF fallback)
+│   ├── statistics.py          # §9 — the only module that turns an exam into statistics
+│   ├── collation.py           # §6 DIN 5007-1 German name sort
+│   ├── migrations.py          # runs `alembic upgrade head` (production's schema path)
 │   └── reports/
 │       ├── templates/         # Typst (.typ) templates for attendance list, internal/office/student reports
-│       └── ...                # statistics module shared by internal-report PDF + dashboard (§9)
+│       ├── typst_packages/    # vendored cetz/cetz-plot (gitignored, see scripts/vendor_typst_packages.py)
+│       └── ...                # attendance_list.py, internal_report.py, examination_office.py, student_results.py
+├── alembic/                  # schema migrations (versions/, env.py)
 ├── tests/
 │   ├── test_fixtures_are_wellformed.py  # guards the synthetic PDFs in /test_data (see scripts/make_fixtures.py)
+│   ├── test_migrations.py    # guards alembic and Base.metadata staying in sync
 │   └── ...
 └── pyproject.toml
 ```
 
-## Setup (once code exists)
+## Setup
 
 This project uses [uv](https://docs.astral.sh/uv/) (or plain `pip`) against `pyproject.toml`.
 
