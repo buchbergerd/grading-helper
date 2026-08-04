@@ -161,6 +161,9 @@ def _full_payload() -> dict[str, Any]:
             "not_attended_count": 4,
             "mean": "2.35",
             "median": "2.20",
+            "numeric_and_failed_count": sum(numeric_counts) + 5,
+            "mean_with_failed_as_five": "2.78",
+            "median_with_failed_as_five": "2.30",
         },
         "total_points_histogram": _histogram(
             "Gesamtpunkte",
@@ -229,6 +232,9 @@ def _empty_payload() -> dict[str, Any]:
             "not_attended_count": 0,
             "mean": None,
             "median": None,
+            "numeric_and_failed_count": 0,
+            "mean_with_failed_as_five": None,
+            "median_with_failed_as_five": None,
         },
         "total_points_histogram": _histogram("Gesamtpunkte", "0", [], max_observed=None),
         "exercise_histograms": [],
@@ -454,6 +460,8 @@ def test_exercise_and_grade_and_versuch_numbers_all_appear() -> None:
     # Grade distribution counts.
     assert "2,35" in text  # mean
     assert "2,20" in text  # median
+    assert "2,78" in text  # mean with failed as 5.0
+    assert "2,30" in text  # median with failed as 5.0
     # Exercise histogram titles, verbatim from the payload.
     assert "Aufgabe 1" in text
     assert "Aufgabe 2" in text

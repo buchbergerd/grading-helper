@@ -980,6 +980,14 @@ export interface GradeDistribution {
   mean: string | null;
   /** DECIMAL — string, two decimal places. `null` when nobody has a numeric grade. */
   median: string | null;
+  /** Denominator of `mean_with_failed_as_five`/`median_with_failed_as_five`: `numeric_count +
+   * failed_count`. */
+  numeric_and_failed_count: number;
+  /** `mean`/`median`, but every "nicht bestanden" student additionally counts as a `5.0`. "n.e."
+   * students are still excluded — they did not sit the exam. DECIMAL — string, two decimal
+   * places. `null` when `numeric_and_failed_count` is 0. */
+  mean_with_failed_as_five: string | null;
+  median_with_failed_as_five: string | null;
 }
 
 /** One bar: half-open `[lower, upper)`, except the last bin of a histogram, which is closed. */

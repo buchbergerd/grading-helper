@@ -231,6 +231,20 @@ export function StatisticsDashboard({
             )
           </span>
         </p>
+        <p data-testid="grade-summary-with-failed">
+          Mittelwert: <strong>{formatDecimalOrDash(activeGradeDistribution.mean_with_failed_as_five)}</strong>,
+          Median:{" "}
+          <strong>
+            {formatDecimalOrDash(activeGradeDistribution.median_with_failed_as_five)}
+          </strong>{" "}
+          <span className="muted small">
+            (über {activeGradeDistribution.numeric_and_failed_count}{" "}
+            {activeGradeDistribution.numeric_and_failed_count === 1
+              ? "Studierenden"
+              : "Studierende"}
+            , wobei „nicht bestanden“ als 5,0 zählt)
+          </span>
+        </p>
         <details className="chart-table-details" data-testid="grade-distribution-table-details">
           <summary>Werte als Tabelle anzeigen</summary>
           <table>

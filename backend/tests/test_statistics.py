@@ -200,6 +200,10 @@ def test_worked_example_always_bonus(session: Session, instructor_user: User) ->
     assert dist["numeric_count"] == 2
     assert dist["mean"] == "4.00"
     assert dist["median"] == "4.00"
+    # with-failed-as-5.0 variant: [4.0, 4.0, 5.0] -> mean = 13/3 = 4.33..., median = 4.0
+    assert dist["numeric_and_failed_count"] == 3
+    assert dist["mean_with_failed_as_five"] == "4.33"
+    assert dist["median_with_failed_as_five"] == "4.00"
 
     assert stats["rates"]["attendance"] == {"numerator": 3, "denominator": 4, "percent": "75.0"}
     assert stats["rates"]["passing"] == {"numerator": 2, "denominator": 3, "percent": "66.7"}
@@ -649,6 +653,64 @@ def test_mean_and_median_are_none_when_nobody_has_a_numeric_grade(
     assert dist["numeric_count"] == 0
     assert dist["mean"] is None
     assert dist["median"] is None
+    # "n.e." contributes nothing here either — only "nicht bestanden" gets the 5.0.
+    assert dist["numeric_and_failed_count"] == 1
+    assert dist["mean_with_failed_as_five"] == "5.00"
+    assert dist["median_with_failed_as_five"] == "5.00"
+
+
+def test_mean_with_failed_as_five_is_none_when_nobody_contributes(
+    session: Session, instructor_user: User
+) -> None:
+    """Only an "n.e." student registered: excluded from both variants, so both stay ``None``."""
+    exam = _make_exam(
+        session,
+        instructor_user,
+        exercises=[("Aufgabe 1", Decimal(60))],
+        grading_schema=WORKED_EXAMPLE_SCHEMA,
+    )
+    _add(session, exam, _registration(matrikelnummer="1", attended=False))  # n.e.
+
+    stats = build_exam_statistics(exam)
+    dist = stats["grade_distribution"]
+
+    assert dist["numeric_and_failed_count"] == 0
+    assert dist["mean_with_failed_as_five"] is None
+    assert dist["median_with_failed_as_five"] is None
+
+
+def test_mean_with_failed_as_five_even_count_uses_exact_mean_before_rounding(
+    session: Session, instructor_user: User
+) -> None:
+    exam = _make_exam(
+        session,
+        instructor_user,
+        exercises=[("Aufgabe 1", Decimal(60))],
+        grading_schema=WORKED_EXAMPLE_SCHEMA,
+    )
+    exercise_id = exam.exercises[0].id
+    _add(
+        session,
+        exam,
+        _registration(
+            matrikelnummer="1", attended=True, points={exercise_id: Decimal("57.0")}
+        ),  # 1.0
+        _registration(
+            matrikelnummer="2", attended=True, points={exercise_id: Decimal("54.0")}
+        ),  # 1.3
+        _registration(
+            matrikelnummer="3", attended=True, points={exercise_id: Decimal("10.0")}
+        ),  # nicht bestanden -> 5.0
+        _registration(matrikelnummer="4", attended=False),  # n.e. -> excluded
+    )
+
+    stats = build_exam_statistics(exam)
+    dist = stats["grade_distribution"]
+
+    # sorted values including failed-as-5.0: 1.0, 1.3, 5.0 -> odd count, median is the middle one.
+    assert dist["numeric_and_failed_count"] == 3
+    assert dist["mean_with_failed_as_five"] == "2.43"  # (1.0 + 1.3 + 5.0) / 3 = 2.4333...
+    assert dist["median_with_failed_as_five"] == "1.30"
 
 
 # --------------------------------------------------------------------------------------------

@@ -100,6 +100,16 @@ class GradeDistribution(TypedDict):
     and "n.e." are excluded by §9's own wording — and are ``None`` when ``numeric_count`` is 0.
     Both are canonical decimal strings already rounded to two places (``ROUND_HALF_UP``); the
     median of an even count is the exact mean of the two middle grades before that rounding.
+
+    ``mean_with_failed_as_five``/``median_with_failed_as_five`` are a second, user-requested
+    calculation (2026-08-04) over the same numeric grades *plus* every "nicht bestanden" student
+    counted as a 5.0 — the German scale's actual fail grade, rather than dropped from the average
+    entirely. "n.e." students are still excluded: they did not sit the exam, so unlike a "nicht
+    bestanden" outcome there is no fail grade to attribute to them. ``None`` when
+    ``numeric_and_failed_count`` (``numeric_count + failed_count``) is 0 — the same "nobody to
+    average" case ``mean``/``median`` already handle. Not part of the spec; kept alongside the
+    §9 pair, computed here for the same one-module reason (module docstring) rather than in
+    either renderer.
     """
 
     numeric: list[GradeCount]
@@ -111,6 +121,11 @@ class GradeDistribution(TypedDict):
     not_attended_count: int
     mean: str | None
     median: str | None
+    #: Denominator of ``mean_with_failed_as_five``/``median_with_failed_as_five``:
+    #: ``numeric_count + failed_count``.
+    numeric_and_failed_count: int
+    mean_with_failed_as_five: str | None
+    median_with_failed_as_five: str | None
 
 
 class HistogramBin(TypedDict):
@@ -305,6 +320,13 @@ TOTAL_POINTS_BIN_WIDTH = Decimal("1.0")
 #: default, not a hard requirement", so this is a sanctioned deviation, not a bug. Do **not**
 #: "fix" this back to ``0.5`` to match the spec text without checking with the user first.
 EXERCISE_BIN_WIDTH = Decimal("1.0")
+
+#: The point value a "nicht bestanden" student contributes to
+#: :attr:`GradeDistribution.mean_with_failed_as_five`/``median_with_failed_as_five`` — the
+#: German scale's actual fail grade (§7.1's ``GRADES`` stops at ``4.0``, the worst *passing*
+#: grade). Deliberately not :data:`~app.grading.engine.GRADE_FAILED`, which is the German text
+#: label ``"nicht bestanden"``, not a number.
+_FAILED_GRADE_VALUE = Decimal("5.0")
 
 #: Every raw decimal value in the payload (as opposed to a pre-built display ``label``) is
 #: rendered with this — Python's own canonical, dot-separated ``Decimal`` string, e.g. ``"29.5"``.
@@ -541,6 +563,29 @@ def _count(outcomes: Sequence[_Outcome]) -> _Counts:
     )
 
 
+def _mean_and_median(sorted_values: Sequence[Decimal]) -> tuple[str | None, str | None]:
+    """Mean and median of an already-ascending-sorted list of grades, rounded once (module
+    docstring) to two places, ``ROUND_HALF_UP``. ``(None, None)`` for an empty list — "nobody to
+    average" is a real state (this module's docstring), not an error.
+
+    Shared by :func:`_grade_distribution`'s two mean/median pairs (§9's and the failed-as-5.0
+    variant) so both use the exact same rounding rule and median-of-even-count formula.
+    """
+    count = len(sorted_values)
+    if count == 0:
+        return None, None
+    mean_raw = sum(sorted_values, Decimal(0)) / count
+    mid = count // 2
+    if count % 2 == 1:
+        median_raw = sorted_values[mid]
+    else:
+        # Exact mean of the two middle values *before* rounding (this module's docstring).
+        median_raw = (sorted_values[mid - 1] + sorted_values[mid]) / 2
+    mean = _canonical(mean_raw.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+    median = _canonical(median_raw.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+    return mean, median
+
+
 def _grade_distribution(outcomes: Sequence[_Outcome]) -> GradeDistribution:
     """§9's "count per grade, plus mean and median grade among students with a numeric grade".
 
@@ -567,21 +612,14 @@ def _grade_distribution(outcomes: Sequence[_Outcome]) -> GradeDistribution:
 
     numeric_values.sort()
     numeric_count = len(numeric_values)
-    mean: str | None
-    median: str | None
-    if numeric_count == 0:
-        mean = None
-        median = None
-    else:
-        mean_raw = sum(numeric_values, Decimal(0)) / numeric_count
-        mid = numeric_count // 2
-        if numeric_count % 2 == 1:
-            median_raw = numeric_values[mid]
-        else:
-            # Exact mean of the two middle values *before* rounding (this module's docstring).
-            median_raw = (numeric_values[mid - 1] + numeric_values[mid]) / 2
-        mean = _canonical(mean_raw.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
-        median = _canonical(median_raw.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+    mean, median = _mean_and_median(numeric_values)
+
+    # Every passing numeric grade is <= 4.0 and GRADE_FAILED (5.0) is worse than all of them, so
+    # appending the failed students' 5.0s to the already-sorted `numeric_values` keeps the combined
+    # list sorted — no re-sort needed.
+    values_with_failed = numeric_values + [_FAILED_GRADE_VALUE] * failed_count
+    numeric_and_failed_count = len(values_with_failed)
+    mean_with_failed_as_five, median_with_failed_as_five = _mean_and_median(values_with_failed)
 
     return GradeDistribution(
         numeric=[GradeCount(grade=grade, count=numeric_counts[grade]) for grade in GRADES],
@@ -590,6 +628,9 @@ def _grade_distribution(outcomes: Sequence[_Outcome]) -> GradeDistribution:
         not_attended_count=not_attended_count,
         mean=mean,
         median=median,
+        numeric_and_failed_count=numeric_and_failed_count,
+        mean_with_failed_as_five=mean_with_failed_as_five,
+        median_with_failed_as_five=median_with_failed_as_five,
     )
 
 

@@ -81,6 +81,9 @@ const STATS: ExamStatistics = {
     not_attended_count: 0,
     mean: "2.15",
     median: "2.00",
+    numeric_and_failed_count: 10,
+    mean_with_failed_as_five: "2.72",
+    median_with_failed_as_five: "2.15",
   },
   total_points_histogram: {
     title: "Gesamtpunkte",

@@ -252,6 +252,9 @@ def test_pdf_and_json_report_the_same_numbers(
     assert distribution["mean"] is not None
     assert german(distribution["mean"]) in text
     assert german(distribution["median"]) in text
+    assert distribution["mean_with_failed_as_five"] is not None
+    assert german(distribution["mean_with_failed_as_five"]) in text
+    assert german(distribution["median_with_failed_as_five"]) in text
 
     for label, value in (
         ("Angemeldet", stats["counts"]["registered"]),

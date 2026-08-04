@@ -486,6 +486,24 @@
   [Median (über #str(numeric-count) Studierende mit Note):],
   if data.grade_distribution.median == none { em-dash } else { de(data.grade_distribution.median) },
 )
+#let numeric-and-failed-count = data.grade_distribution.numeric_and_failed_count
+#let with-failed-suffix = [(über #str(numeric-and-failed-count) Studierende, wobei „nicht bestanden“ als 5,0 zählt)]
+#kennzahl(
+  [Mittelwert:],
+  if data.grade_distribution.mean_with_failed_as_five == none {
+    em-dash
+  } else {
+    [#de(data.grade_distribution.mean_with_failed_as_five) #with-failed-suffix]
+  },
+)
+#kennzahl(
+  [Median:],
+  if data.grade_distribution.median_with_failed_as_five == none {
+    em-dash
+  } else {
+    [#de(data.grade_distribution.median_with_failed_as_five) #with-failed-suffix]
+  },
+)
 
 // --- Histogramm der Gesamtpunkte -----------------------------------------------------------------
 // "Left is good" (user request, 2026-08-03): every points histogram on this page plots its bins

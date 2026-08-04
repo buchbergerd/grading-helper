@@ -390,6 +390,13 @@ Three rules the frontend depends on — all three exist so no renderer ever comp
   see §9's half-open/closed rule); `lower` and `upper` are there for tooltips and axis work, not
   for rebuilding the caption.
 
+`grade_distribution` carries two mean/median pairs: `mean`/`median` (over numeric grades only,
+per §9) and a second, user-requested variant `mean_with_failed_as_five`/
+`median_with_failed_as_five` (denominator `numeric_and_failed_count`) that additionally counts
+every "nicht bestanden" student as a `5.0`. Both pairs exclude "n.e." students — they did not sit
+the exam, so unlike "nicht bestanden" there is no fail grade to attribute to them. Both pairs are
+`null` when their respective denominator is 0.
+
 `counts` distinguishes `not_attended` (`attended = false`) from `attendance_not_recorded`
 (`attended = null`), and carries `incomplete`: students who attended but are missing at least one
 exercise entry. Five buckets always partition `registered`:

@@ -174,6 +174,9 @@ describe("gradeDistributionSeries", () => {
     not_attended_count: 0,
     mean: null,
     median: null,
+    numeric_and_failed_count: 0,
+    mean_with_failed_as_five: null,
+    median_with_failed_as_five: null,
   };
 
   it("produces all ten numeric grades plus 'nicht bestanden' and 'n.e.', in that fixed order", () => {

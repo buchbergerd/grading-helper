@@ -116,6 +116,9 @@ const STATS: ExamStatistics = {
     not_attended_count: 2,
     mean: "2.15",
     median: "2.00",
+    numeric_and_failed_count: 33,
+    mean_with_failed_as_five: "2.58",
+    median_with_failed_as_five: "2.30",
   },
   total_points_histogram: {
     title: "Gesamtpunkte",
@@ -233,6 +236,9 @@ const STATS_EMPTY: ExamStatistics = {
     not_attended_count: 0,
     mean: null,
     median: null,
+    numeric_and_failed_count: 0,
+    mean_with_failed_as_five: null,
+    median_with_failed_as_five: null,
   },
   total_points_histogram: {
     title: "Gesamtpunkte",
@@ -345,6 +351,15 @@ describe("ExamStatisticsPage — Kennzahlen and rates", () => {
     expect(summary.textContent).toContain("2,15");
     expect(summary.textContent).toContain("2,00");
     expect(summary.textContent).toContain("28");
+  });
+
+  it("shows the with-failed-as-5.0 mean/median labelled over numeric_and_failed_count students", async () => {
+    renderPage();
+
+    const summary = await screen.findByTestId("grade-summary-with-failed");
+    expect(summary.textContent).toContain("2,58");
+    expect(summary.textContent).toContain("2,30");
+    expect(summary.textContent).toContain("33");
   });
 
   it("renders the grade distribution, total-points and versuch tables with the expected rows", async () => {
