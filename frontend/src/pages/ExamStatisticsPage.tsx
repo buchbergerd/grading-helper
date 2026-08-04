@@ -240,14 +240,19 @@ export default function ExamStatisticsPage(): JSX.Element {
 
   const series = buildStatisticsSeries(stats);
 
-  // The grade-distribution, total-points-histogram and Versuch-breakdown sections switch to the
-  // simulated payload — everything else (KPIs, exercise histograms) keeps showing `stats`/
-  // `series`, the real numbers, unlabeled and untouched. All three of these *do* depend on the
-  // bonus (a Versuch group's `passed`/`failed` split moves exactly like the overall counts'),
-  // which is why they move together rather than only the two originally in scope.
+  // Kennzahlen, the grade-distribution, total-points-histogram and Versuch-breakdown sections
+  // switch to the simulated payload — only the exercise histograms keep showing `stats`/`series`,
+  // the real numbers, since no per-exercise entry ever depends on the exam-wide bonus. Within
+  // Kennzahlen only `counts.passed`/`failed` and `rates.passing`/`failure` actually move — every
+  // other count there (`registered`, `attended`, `graded`, `incomplete`, …) is decided by
+  // attendance/completeness before bonus is even considered (`app/statistics.py::_classify`), so
+  // reading the whole panel from the simulated payload changes nothing for those, only relabels
+  // the panel while the two that do move update correctly.
   const usingSimulation =
     simulationEnabled && simulatedStats !== null && simulatedBonusCanonical !== null;
   const simulationSeries = simulatedStats !== null ? buildStatisticsSeries(simulatedStats) : null;
+  const activeCounts = usingSimulation ? simulatedStats.counts : stats.counts;
+  const activeRates = usingSimulation ? simulatedStats.rates : stats.rates;
   const activeGradeDistribution = usingSimulation
     ? simulatedStats.grade_distribution
     : stats.grade_distribution;
@@ -447,29 +452,29 @@ export default function ExamStatisticsPage(): JSX.Element {
 
       {/* ------------------------------------------------------------------------- Kennzahlen */}
       <div className="panel">
-        <h2 style={{ marginTop: 0 }}>Kennzahlen</h2>
+        <h2 style={{ marginTop: 0 }}>Kennzahlen{simulationTitleSuffix}</h2>
         <div className="kpi-grid">
-          <KpiCard label="Angemeldet" value={stats.counts.registered} testId="kpi-registered" />
-          <KpiCard label="Anwesend" value={stats.counts.attended} testId="kpi-attended" />
+          <KpiCard label="Angemeldet" value={activeCounts.registered} testId="kpi-registered" />
+          <KpiCard label="Anwesend" value={activeCounts.attended} testId="kpi-attended" />
           <KpiCard
             label="Nicht angetreten"
-            value={stats.counts.not_attended}
+            value={activeCounts.not_attended}
             testId="kpi-not-attended"
           />
           <KpiCard
             label="Noch nicht erfasst"
-            value={stats.counts.attendance_not_recorded}
+            value={activeCounts.attendance_not_recorded}
             testId="kpi-attendance-not-recorded"
           />
-          <KpiCard label="Bewertet" value={stats.counts.graded} testId="kpi-graded" />
-          <KpiCard label="Unvollständig" value={stats.counts.incomplete} testId="kpi-incomplete" />
+          <KpiCard label="Bewertet" value={activeCounts.graded} testId="kpi-graded" />
+          <KpiCard label="Unvollständig" value={activeCounts.incomplete} testId="kpi-incomplete" />
           {/* Only meaningful before a grading schema exists, and always 0 afterwards — shown
               conditionally so the common case isn't cluttered with a permanent zero, but never
               hidden while it is non-zero, or those students would appear nowhere at all. */}
-          {stats.counts.awaiting_schema > 0 && (
+          {activeCounts.awaiting_schema > 0 && (
             <KpiCard
               label="Ohne Notenschema"
-              value={stats.counts.awaiting_schema}
+              value={activeCounts.awaiting_schema}
               testId="kpi-awaiting-schema"
             />
           )}
@@ -477,17 +482,17 @@ export default function ExamStatisticsPage(): JSX.Element {
         <div className="kpi-grid" style={{ marginTop: "0.75rem" }}>
           <KpiCard
             label="Anwesenheitsquote"
-            value={formatRate(stats.rates.attendance)}
+            value={formatRate(activeRates.attendance)}
             testId="rate-attendance"
           />
           <KpiCard
             label="Bestehensquote"
-            value={formatRate(stats.rates.passing)}
+            value={formatRate(activeRates.passing)}
             testId="rate-passing"
           />
           <KpiCard
             label="Durchfallquote"
-            value={formatRate(stats.rates.failure)}
+            value={formatRate(activeRates.failure)}
             testId="rate-failure"
           />
         </div>

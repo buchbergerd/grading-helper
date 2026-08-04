@@ -813,6 +813,7 @@ describe("ExamStatisticsPage — bonus-points simulation", () => {
     ).toBe(true);
 
     // The headings say so, and the box states the pass-count comparison the task asks for.
+    expect(screen.getByText(/Kennzahlen — Simulation \(10 Bonuspunkte\)/)).not.toBeNull();
     expect(screen.getByText(/Notenverteilung — Simulation \(10 Bonuspunkte\)/)).not.toBeNull();
     expect(
       screen.getByText(/Bestehensquote nach Versuch — Simulation \(10 Bonuspunkte\)/),
@@ -827,9 +828,12 @@ describe("ExamStatisticsPage — bonus-points simulation", () => {
     expect(versuch1.textContent).toContain("28");
     expect(versuch1.textContent).toContain("6,7\u00A0% (2 von 30)");
 
-    // KPIs and rates stay on the real numbers — only the three grade-derived sections simulate.
+    // Kennzahlen's Bestehensquote/Durchfallquote move with the simulation too, but attendance-only
+    // counts stay identical either way (they never depended on the bonus in the first place).
     expect(screen.getByTestId("kpi-graded").textContent).toContain("33");
-    expect(screen.getByTestId("rate-passing").textContent).toContain("84,8\u00A0% (28 von 33)");
+    expect(screen.getByTestId("kpi-registered").textContent).toContain("39");
+    expect(screen.getByTestId("rate-passing").textContent).toContain("90,9\u00A0% (30 von 33)");
+    expect(screen.getByTestId("rate-failure").textContent).toContain("9,1\u00A0% (3 von 33)");
   });
 
   it("does not bound-check the input field: an out-of-slider-range value is still sent as typed", async () => {
@@ -878,6 +882,8 @@ describe("ExamStatisticsPage — bonus-points simulation", () => {
     expect(screen.queryByTestId("simulation-box")).toBeNull();
     expect(screen.getByTestId("grade-row-4,0").textContent).toContain("1");
     expect(screen.getByTestId("versuch-row-1").textContent).toContain("26");
+    expect(screen.getByText("Kennzahlen")).not.toBeNull();
+    expect(screen.queryByText(/Kennzahlen — Simulation/)).toBeNull();
   });
 
   it("shows a hint that ONLY_IF_PASSING_WITHOUT_BONUS does not rescue an already-failing student", async () => {
