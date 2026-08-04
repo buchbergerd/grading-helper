@@ -210,12 +210,13 @@ mkdir -p ./data && sudo chown 10001:10001 ./data
 ## 7. Data retention / exam deletion
 
 No automatic deletion, by design (§13) — nothing in this compose setup times anything out on its
-own. The spec requires an explicit "delete exam" action (cascading to all of that exam's student
-registrations and points — real personal data, Matrikelnummern included) so instructors can
-comply with retention obligations once they expire; **as of this writing that action is not yet
-implemented in the app** (tracked in `CLAUDE.md`'s status line under §15.6). Until it lands,
-retention has no in-app path at all — don't plan around a feature that doesn't exist yet; deleting
-exam data today means an operator manually removing rows from the SQLite file.
+own. Instructors delete an exam themselves once retention obligations expire, from the exam's
+detail page in the UI (a confirm dialog in front of `DELETE /exams/{id}?confirm=true`,
+`backend/app/api/exams.py::delete_exam`) — this cascades at the database level to that exam's
+exercises, grade thresholds, registrations and points, i.e. all of its personal data
+(Matrikelnummern included). There is no undo; take a backup (step 5) first if there's any doubt.
+No operator/host-level step is needed for routine retention — this is the in-app path, not a
+manual SQLite edit.
 
 ## 8. Updating
 
