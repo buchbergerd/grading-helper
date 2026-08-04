@@ -68,8 +68,9 @@ export default function ExamStatisticsPage(): JSX.Element {
   // task's explicit requirement that this field is never bound-checked, so it is *not* clamped to
   // the slider's 0-10 range before being sent. `simulatedStats` is a second, independent
   // `ExamStatistics` payload (`?bonus_points_override=...`, see `api/client.ts`) that only the
-  // grade-distribution and total-points-histogram sections read from — every other section on
-  // this page keeps reading the real `stats` so KPIs never silently become hypothetical.
+  // grade-distribution, total-points-histogram and Versuch-breakdown sections read from — every
+  // other section on this page (KPIs, exercise histograms) keeps reading the real `stats` so
+  // those never silently become hypothetical.
   const [simulationEnabled, setSimulationEnabled] = useState(false);
   const [bonusText, setBonusText] = useState("0");
   // The slider's own displayed position — kept as separate state, not derived fresh from
@@ -239,9 +240,11 @@ export default function ExamStatisticsPage(): JSX.Element {
 
   const series = buildStatisticsSeries(stats);
 
-  // Only the grade-distribution and total-points-histogram sections switch to the simulated
-  // payload — everything else on this page (KPIs, exercise histograms, the Versuch breakdown)
-  // keeps showing `stats`/`series`, the real numbers, unlabeled and untouched.
+  // The grade-distribution, total-points-histogram and Versuch-breakdown sections switch to the
+  // simulated payload — everything else (KPIs, exercise histograms) keeps showing `stats`/
+  // `series`, the real numbers, unlabeled and untouched. All three of these *do* depend on the
+  // bonus (a Versuch group's `passed`/`failed` split moves exactly like the overall counts'),
+  // which is why they move together rather than only the two originally in scope.
   const usingSimulation =
     simulationEnabled && simulatedStats !== null && simulatedBonusCanonical !== null;
   const simulationSeries = simulatedStats !== null ? buildStatisticsSeries(simulatedStats) : null;
@@ -263,6 +266,9 @@ export default function ExamStatisticsPage(): JSX.Element {
   const activePassingThreshold = usingSimulation
     ? simulatedStats.passing_threshold
     : stats.passing_threshold;
+  const activeVersuch = usingSimulation && simulationSeries !== null
+    ? simulationSeries.versuch
+    : series.versuch;
   const simulationTitleSuffix = usingSimulation
     ? ` — Simulation (${formatDecimal(simulatedBonusCanonical)} Bonuspunkte)`
     : "";
@@ -618,12 +624,12 @@ export default function ExamStatisticsPage(): JSX.Element {
 
       {/* --------------------------------------------------------- Bestehensquote nach Versuch */}
       <div className="panel">
-        <h2 style={{ marginTop: 0 }}>Bestehensquote nach Versuch</h2>
-        {series.versuch.length === 0 ? (
+        <h2 style={{ marginTop: 0 }}>Bestehensquote nach Versuch{simulationTitleSuffix}</h2>
+        {activeVersuch.length === 0 ? (
           <p className="muted">Keine Daten vorhanden.</p>
         ) : (
           <>
-            <VersuchChart data={series.versuch} />
+            <VersuchChart data={activeVersuch} />
             <details className="chart-table-details" data-testid="versuch-table-details">
               <summary>Werte als Tabelle anzeigen</summary>
               <table>
@@ -641,7 +647,7 @@ export default function ExamStatisticsPage(): JSX.Element {
                   </tr>
                 </thead>
                 <tbody>
-                  {series.versuch.map((group) => (
+                  {activeVersuch.map((group) => (
                     <tr key={group.versuch} data-testid={`versuch-row-${group.versuch}`}>
                       <th scope="row">{group.label}</th>
                       <td className="numeric">{group.passed}</td>

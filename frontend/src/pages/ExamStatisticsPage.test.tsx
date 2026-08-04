@@ -748,6 +748,18 @@ describe("ExamStatisticsPage — bonus-points simulation", () => {
       failed_count: 3,
       mean: "2.05",
     },
+    // Two of 1. Versuch's originally-failing students now pass — the Versuch breakdown's
+    // passed/failed split depends on the bonus exactly like the overall counts do.
+    versuch_breakdown: STATS.versuch_breakdown.map((group) =>
+      group.versuch === 1
+        ? {
+            ...group,
+            passed: 28,
+            failed: 2,
+            failure_rate: { numerator: 2, denominator: 30, percent: "6.7" },
+          }
+        : group,
+    ),
   };
 
   /** Real numbers by default; the simulated payload only once a `bonus_points_override` query
@@ -781,7 +793,7 @@ describe("ExamStatisticsPage — bonus-points simulation", () => {
     expect(input.value).toBe(EXAM.bonus_points);
   });
 
-  it("typing a bonus value fetches the simulated payload and swaps only the two affected charts", async () => {
+  it("typing a bonus value fetches the simulated payload and swaps the three affected sections", async () => {
     const user = userEvent.setup();
     const mock = renderPage(simulationRoutes());
     await screen.findByTestId("grade-summary");
@@ -800,15 +812,24 @@ describe("ExamStatisticsPage — bonus-points simulation", () => {
       calledUrls.some((url) => url.includes("/exams/7/statistics?bonus_points_override=10")),
     ).toBe(true);
 
-    // The heading says so, and the box states the pass-count comparison the task asks for.
+    // The headings say so, and the box states the pass-count comparison the task asks for.
     expect(screen.getByText(/Notenverteilung — Simulation \(10 Bonuspunkte\)/)).not.toBeNull();
+    expect(
+      screen.getByText(/Bestehensquote nach Versuch — Simulation \(10 Bonuspunkte\)/),
+    ).not.toBeNull();
     const wouldPass = screen.getByTestId("simulation-would-pass");
     expect(wouldPass.textContent).toContain("30");
     expect(wouldPass.textContent).toContain("aktuell 28 von 33");
 
-    // KPIs and rates stay on the real numbers — only Notenverteilung/Gesamtpunkte simulate.
+    // The Versuch table moves with the simulation too (a Versuch group's passed/failed split
+    // depends on the bonus exactly like the overall counts).
+    const versuch1 = screen.getByTestId("versuch-row-1");
+    expect(versuch1.textContent).toContain("28");
+    expect(versuch1.textContent).toContain("6,7\u00A0% (2 von 30)");
+
+    // KPIs and rates stay on the real numbers — only the three grade-derived sections simulate.
     expect(screen.getByTestId("kpi-graded").textContent).toContain("33");
-    expect(screen.getByTestId("rate-passing").textContent).toContain("84,8 % (28 von 33)");
+    expect(screen.getByTestId("rate-passing").textContent).toContain("84,8\u00A0% (28 von 33)");
   });
 
   it("does not bound-check the input field: an out-of-slider-range value is still sent as typed", async () => {
@@ -856,6 +877,7 @@ describe("ExamStatisticsPage — bonus-points simulation", () => {
     await user.click(screen.getByTestId("simulation-toggle"));
     expect(screen.queryByTestId("simulation-box")).toBeNull();
     expect(screen.getByTestId("grade-row-4,0").textContent).toContain("1");
+    expect(screen.getByTestId("versuch-row-1").textContent).toContain("26");
   });
 
   it("shows a hint that ONLY_IF_PASSING_WITHOUT_BONUS does not rescue an already-failing student", async () => {
