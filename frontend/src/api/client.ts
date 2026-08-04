@@ -395,6 +395,57 @@ export function deleteExam(id: number): Promise<void> {
   return request<void>(`/exams/${id}?confirm=true`, { method: "DELETE" });
 }
 
+/* --------------------------------------------------- whole-exam export/import (backup/transfer,
+   added post-milestone-6 — not part of the §15 milestone set). See `downloadFile`, further down
+   this file, for why this bypasses `request()`. */
+
+/**
+ * `GET /exams/{id}/export` — a JSON file bundling the exam's settings, exercises, grading
+ * schema, and every registration with its points (excluded ones included, §5.3). Read as a
+ * `Blob`, same as the PDF/Excel report downloads below.
+ */
+export function exportExam(examId: number): Promise<DownloadedFile> {
+  return downloadFile(`/exams/${examId}/export`, "application/json", "export.json");
+}
+
+/** `POST /exams/import` response — matches `ExamImportResult` in `app/api/schemas.py`. */
+export interface ExamImportResult {
+  exam: ExamDetail;
+  /** Whether `lecture_name` matched none of the caller's own lectures and a new one was made. */
+  lecture_created: boolean;
+  registrations_imported: number;
+}
+
+/**
+ * `POST /exams/import` — `multipart/form-data`, field name `file`. Bypasses `request()` for the
+ * same reason `importRegistrations` does further down: a multipart body needs the browser to set
+ * its own `Content-Type` boundary, which `request()`'s fixed `application/json` header would
+ * break. Always creates a **new** exam — never a merge — and auto-creates the lecture named in
+ * the file if the caller doesn't already have one by that exact name.
+ */
+export async function importExam(file: File): Promise<ExamImportResult> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  let response: Response;
+  try {
+    response = await fetch(`${BASE}/exams/import`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { Accept: "application/json" },
+      body: formData,
+    });
+  } catch {
+    throw new ApiError(0, ["Der Server ist nicht erreichbar."], null);
+  }
+
+  const parsed = await parseJsonBody(response);
+  if (!response.ok) {
+    throw new ApiError(response.status, extractMessages(response.status, parsed), parsed);
+  }
+  return parsed as ExamImportResult;
+}
+
 /* ------------------------------------------------------------------ admin */
 
 export function listUsers(): Promise<AdminUser[]> {

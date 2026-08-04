@@ -4,6 +4,7 @@ import { Link, useNavigate, useParams } from "react-router";
 import {
   deleteExam,
   errorMessages,
+  exportExam,
   getExam,
   updateExam,
   type ExamDetail,
@@ -127,6 +128,8 @@ export default function ExamDetailPage(): JSX.Element {
   const [saving, setSaving] = useState(false);
   const [pendingDelete, setPendingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportMessages, setExportMessages] = useState<string[]>([]);
 
   const [semester, setSemester] = useState("");
   const [termin, setTermin] = useState("");
@@ -323,6 +326,31 @@ export default function ExamDetailPage(): JSX.Element {
     }
   }
 
+  /**
+   * `blob -> URL.createObjectURL -> temporary <a download> click -> revoke`, same pattern as the
+   * §10/§11 report downloads on `ExamStatisticsPage.tsx`.
+   */
+  async function onExport(): Promise<void> {
+    if (examId === null) return;
+    setExporting(true);
+    setExportMessages([]);
+    try {
+      const { blob, filename } = await exportExam(examId);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      setExportMessages(errorMessages(error));
+    } finally {
+      setExporting(false);
+    }
+  }
+
   async function onDeleteConfirmed(): Promise<void> {
     if (examId === null) return;
     setDeleting(true);
@@ -379,7 +407,11 @@ export default function ExamDetailPage(): JSX.Element {
           <Link className="button-link" to={`/klausuren/${exam.id}/statistik`}>
             Statistik
           </Link>
+          <button type="button" onClick={() => void onExport()} disabled={exporting}>
+            {exporting ? "Wird exportiert …" : "Klausur exportieren"}
+          </button>
         </p>
+        <ErrorList messages={exportMessages} />
       </div>
 
       <ErrorList messages={messages} title={messages.length > 1 ? "Bitte prüfen:" : undefined} />

@@ -390,6 +390,90 @@ class ExamUpdateRequest(BaseModel):
 
 
 # --------------------------------------------------------------------------------------------
+# Whole-exam export/import (backup / transfer between installations — see ``app/api/exams.py``)
+# --------------------------------------------------------------------------------------------
+
+
+class ExamExportExercise(BaseModel):
+    """One exercise inside an export file.
+
+    ``position`` is carried for readability only — it is **not** what ties a registration's
+    ``points`` entry to this exercise on import; that is this exercise's 1-based index within
+    the file's ``exercises`` list (see :class:`ExamExportRegistration`), which stays correct even
+    if a hand-edited file's ``position`` values are no longer contiguous.
+    """
+
+    name: str
+    max_points: DecimalString
+    position: int
+
+
+class ExamExportGradeThreshold(BaseModel):
+    grade: str
+    percentage: DecimalString
+
+
+class ExamExportRegistration(BaseModel):
+    """One registration inside an export file, including its per-exercise points.
+
+    ``points`` is keyed by the exercise's **1-based index** within this file's own
+    ``exercises`` list, as a string (JSON object keys are always strings) — never by a database
+    id, which is meaningless once re-imported as new rows. A key absent from the dict means "not
+    entered" (§8.1); it must never be filled in with an implicit zero, and a *present* key with
+    ``"0"`` means "entered zero" — the same distinction ``ExercisePoints`` itself makes.
+
+    ``excluded`` students are included, not dropped (§5.3: excluded is an audit flag, never a
+    deletion) — omitting them would make the round trip lossy.
+    """
+
+    matrikelnummer: str = Field(min_length=1, max_length=64)
+    nachname: str = Field(min_length=1, max_length=255)
+    vorname: str = Field(min_length=1, max_length=255)
+    course_code: str = Field(min_length=1, max_length=255)
+    module_title: str = Field(min_length=1)
+    versuch: int = Field(default=1, ge=1)
+    kommentar: str | None = None
+    flagged: bool = False
+    excluded: bool = False
+    #: ``null`` = not yet recorded, distinct from ``false`` ("nicht erschienen") — §7.4/§8.1.
+    attended: bool | None = None
+    source_filename: str | None = None
+    points: dict[str, DecimalString] = {}
+
+
+class ExamExportPayload(BaseModel):
+    """The whole-exam export/import file — a downloadable/uploadable backup, not part of the
+    ordinary JSON request/response contract.
+
+    Deliberately excludes ``owner_id``: the importer always becomes the new exam's owner (see
+    ``app/api/exams.py::import_exam``), never a value carried in the file — a file exported from
+    another installation could otherwise reference a meaningless, or even someone else's, user
+    id, which would be an access-control hole if honored.
+    """
+
+    format_version: int = 1
+    lecture_name: str
+    semester: str
+    termin: str
+    exam_date: date | None = None
+    bonus_mode: BonusMode = BonusMode.ALWAYS
+    bonus_points: DecimalString = Decimal(0)
+    exercises: list[ExamExportExercise] = []
+    grading_schema: list[ExamExportGradeThreshold] = []
+    registrations: list[ExamExportRegistration] = []
+
+
+class ExamImportResult(BaseModel):
+    """``POST /api/exams/import`` response."""
+
+    exam: ExamDetail
+    #: Whether ``lecture_name`` did **not** match one of the caller's existing lectures and a new
+    #: one was created for it, vs. an existing lecture of that name being reused.
+    lecture_created: bool
+    registrations_imported: int
+
+
+# --------------------------------------------------------------------------------------------
 # Student registrations (§5.1, §5.3, §6 — see ``app/api/registrations.py``)
 # --------------------------------------------------------------------------------------------
 

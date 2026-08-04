@@ -122,6 +122,16 @@ only job is to group an exam's recurring sittings over time so settings can be c
 (see below). `module_title` (per course, from the PDF) is what actually appears in
 course-facing report sections — see §10.
 
+**Whole-exam export/import** (added post-milestone-6, by request, not part of the numbered
+milestones above): an instructor can download one Exam — its settings, exercises, grading
+schema, and every StudentRegistration with its points, excluded ones included — as a single JSON
+file, and upload that file back in to recreate it, as a backup or to hand an exam to another
+instructor or installation. Import always creates a **new** Exam, never a merge into an existing
+one; if the file's Lecture name doesn't match one of the importing instructor's own Lectures, one
+is created for it automatically. The importer always becomes the new Exam's owner — the file
+never carries an owner identity. See `docs/api-contract.md`'s "Export / import" section for the
+exact file shape.
+
 ---
 
 ## 5. Importing registered students (PDF)

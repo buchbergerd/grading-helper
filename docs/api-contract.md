@@ -164,6 +164,44 @@ Standard FastAPI/Pydantic validation errors keep their default `422` shape.
 **Password-policy failures use the same `{"detail": {"errors": [...]}}` shape** (on admin create,
 admin reset, and self-service change), so the frontend needs only one German-message renderer.
 
+### Export / import (whole-exam backup/transfer) — added post-milestone-6
+
+Not part of any §15 milestone; added afterwards by user request. Downloads/uploads one exam —
+settings, exercises, grading schema, every registration (**including excluded ones**, §5.3) and
+every entered point — as a single JSON file, for backup or for handing an exam to another
+instructor/installation.
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | `/api/exams/{id}/export` | — | `200 application/json` + `Content-Disposition` (same ASCII-fallback/RFC 5987 shape as the PDF/Excel reports), `Cache-Control: no-store`. The file itself, shape below |
+| POST | `/api/exams/import` | `multipart/form-data`: field **`file`** (one JSON file) | `201` + `{exam: <exam detail>, lecture_created: bool, registrations_imported: int}` |
+
+Export file shape: `{format_version: 1, lecture_name, semester, termin, exam_date, bonus_mode,
+bonus_points, exercises: [{name, max_points, position}], grading_schema: [{grade, percentage}],
+registrations: [{matrikelnummer, nachname, vorname, course_code, module_title, versuch,
+kommentar, flagged, excluded, attended, source_filename, points}]}`. Decimal fields are strings,
+same §7.0 rule as everywhere else on the wire.
+
+- **No `owner_id` anywhere in the file.** Import always makes the importer the new exam's owner;
+  a value read from the file would be either meaningless (a different installation's user id) or,
+  if it happened to resolve, a privilege hole.
+- Each registration's `points` is keyed by the **1-based index of the exercise within this
+  file's own `exercises` list** (as a string), not by any database id or by `Exercise.position` —
+  both are meaningless once re-imported as new rows. A key absent from `points` means "not
+  entered" (§8.1) and must never be filled in with an implicit zero on import; `attended: null`
+  ("not yet recorded") must not become `false`.
+- **Import always creates a new exam** — never a merge into an existing one. `lecture_name` is
+  matched against the caller's **own** lectures only, by exact name; no match creates a new
+  `Lecture` (`lecture_created: true` in the response). A same-named lecture belonging to another
+  instructor is never matched or revealed (same 404-not-403 posture as the rest of the API).
+- Validated before anything is written, same all-or-nothing posture as the registration-PDF
+  import: `format_version` (only `1` is accepted), `semester`/`termin` non-empty, `bonus_points`
+  non-negative, the exercises/grading-schema business rules (`create_exam`'s own), duplicate
+  Matrikelnummer **within the file**, and every `points` entry naming a real exercise of this
+  file with a non-negative value. Failures are `422` with `{"detail": {"errors": [...]}}`; a
+  structurally malformed file (not valid JSON, or missing/mistyped fields) also gets `422`, with
+  Pydantic's own per-field messages rather than a hand-translated one for every possible shape.
+
 ## Registrations (§5.3) — milestone 2
 
 All routes owner-scoped through the exam; another instructor gets `404`, not `403`.

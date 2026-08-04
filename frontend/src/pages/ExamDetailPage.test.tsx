@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router";
 
 import ExamDetailPage from "./ExamDetailPage";
-import { installFetchMock, jsonResponse } from "../test/mockFetch";
+import { blobResponse, installFetchMock, jsonResponse } from "../test/mockFetch";
 import type { ExamDetail } from "../api/client";
 
 /**
@@ -46,10 +46,14 @@ const EXAM: ExamDetail = {
   ],
 };
 
-function renderPage(exam: ExamDetail = EXAM): ReturnType<typeof installFetchMock> {
+function renderPage(
+  exam: ExamDetail = EXAM,
+  overrides: Partial<Record<string, (url: string, init: RequestInit | undefined) => Response>> = {},
+): ReturnType<typeof installFetchMock> {
   const mock = installFetchMock({
     // Both the initial GET and the PATCH answer with the same exam detail.
     "/api/exams/7": () => jsonResponse(200, exam),
+    ...overrides,
   });
   render(
     <MemoryRouter initialEntries={["/klausuren/7"]}>
@@ -610,5 +614,44 @@ describe("ExamDetailPage — back button (breadcrumb)", () => {
     await user.click(back);
 
     expect(await screen.findByText("Vorlesungsseite")).not.toBeNull();
+  });
+});
+
+describe("ExamDetailPage — export", () => {
+  it("fetches the JSON file and triggers a browser download using the server's filename", async () => {
+    const user = userEvent.setup();
+    const createObjectURL = vi.fn(() => "blob:mock-url");
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal("URL", { ...URL, createObjectURL, revokeObjectURL });
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+
+    const exportBlob = new Blob(['{"format_version":1}'], { type: "application/json" });
+    renderPage(EXAM, {
+      "/api/exams/7/export": () =>
+        blobResponse(200, exportBlob, {
+          "Content-Disposition":
+            "attachment; filename=\"Export_WiSe_23-24_1._Termin.json\"; " +
+            "filename*=UTF-8''Export_WiSe_23-24_1._Termin.json",
+        }),
+    });
+
+    await user.click(await screen.findByRole("button", { name: "Klausur exportieren" }));
+
+    await waitFor(() => {
+      expect(createObjectURL).toHaveBeenCalledWith(exportBlob);
+    });
+    expect(clickSpy).toHaveBeenCalled();
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:mock-url");
+  });
+
+  it("shows the server's German error message when the export request fails", async () => {
+    const user = userEvent.setup();
+    renderPage(EXAM, {
+      "/api/exams/7/export": () => jsonResponse(404, { detail: "Prüfung nicht gefunden." }),
+    });
+
+    await user.click(await screen.findByRole("button", { name: "Klausur exportieren" }));
+
+    expect(await screen.findByText("Prüfung nicht gefunden.")).not.toBeNull();
   });
 });

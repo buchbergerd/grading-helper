@@ -1,16 +1,17 @@
-import { useCallback, useEffect, useState, type FormEvent, type JSX } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent, type JSX } from "react";
 import { Link } from "react-router";
 
 import {
   createLecture,
   deleteLecture,
   errorMessages,
+  importExam,
   listLectures,
   updateLecture,
   type LectureSummary,
 } from "../api/client";
 import { ConfirmDialog } from "../components/ConfirmDialog";
-import { ErrorList } from "../components/Messages";
+import { ErrorList, SuccessNotice } from "../components/Messages";
 import { formatDate, pluralize } from "../util/format";
 
 export default function LectureListPage(): JSX.Element {
@@ -26,6 +27,15 @@ export default function LectureListPage(): JSX.Element {
 
   const [pendingDelete, setPendingDelete] = useState<LectureSummary | null>(null);
   const [deleting, setDeleting] = useState(false);
+
+  const [importing, setImporting] = useState(false);
+  const [importMessages, setImportMessages] = useState<string[]>([]);
+  const [importedExam, setImportedExam] = useState<{
+    id: number;
+    lectureName: string;
+    lectureCreated: boolean;
+  } | null>(null);
+  const importFileInput = useRef<HTMLInputElement | null>(null);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -77,6 +87,38 @@ export default function LectureListPage(): JSX.Element {
     }
   }
 
+  /**
+   * Whole-exam import (backup/transfer, added post-milestone-6): always creates a new exam, and
+   * auto-creates the lecture named in the file if the caller doesn't already have one by that
+   * exact name (`ExamImportResult.lecture_created`). Stays on this page and reloads the list
+   * (a new lecture may now exist) rather than navigating straight to the new exam, so the
+   * lecture-created-or-reused notice is actually visible before the instructor moves on.
+   */
+  async function onImport(): Promise<void> {
+    const file = importFileInput.current?.files?.[0];
+    if (file === undefined) {
+      setImportMessages(["Bitte zuerst eine Exportdatei auswählen."]);
+      return;
+    }
+    setImporting(true);
+    setImportMessages([]);
+    setImportedExam(null);
+    try {
+      const result = await importExam(file);
+      if (importFileInput.current !== null) importFileInput.current.value = "";
+      setImportedExam({
+        id: result.exam.id,
+        lectureName: result.exam.lecture_name,
+        lectureCreated: result.lecture_created,
+      });
+      await reload();
+    } catch (error) {
+      setImportMessages(errorMessages(error));
+    } finally {
+      setImporting(false);
+    }
+  }
+
   async function onDeleteConfirmed(): Promise<void> {
     if (pendingDelete === null) return;
     setDeleting(true);
@@ -116,6 +158,33 @@ export default function LectureListPage(): JSX.Element {
           </button>
         </div>
       </form>
+
+      <div className="panel">
+        <h2 style={{ marginTop: 0 }}>Klausur importieren</h2>
+        <p className="small muted">
+          Aus einer zuvor exportierten Datei (Eckdaten, Aufgaben, Notenschlüssel, Anmeldungen und
+          Punkte) eine neue Klausur anlegen. Gibt es noch keine Vorlesung mit dem in der Datei
+          hinterlegten Namen, wird sie automatisch angelegt.
+        </p>
+        <div className="row">
+          <div style={{ flex: "1 1 20rem" }}>
+            <label htmlFor="import-file">Exportdatei</label>
+            <input id="import-file" type="file" accept=".json,application/json" ref={importFileInput} />
+          </div>
+          <button type="button" className="primary" onClick={() => void onImport()} disabled={importing}>
+            {importing ? "Wird importiert …" : "Importieren"}
+          </button>
+        </div>
+        <ErrorList messages={importMessages} />
+        {importedExam !== null ? (
+          <SuccessNotice>
+            {importedExam.lectureCreated
+              ? `Die Klausur wurde importiert — eine neue Vorlesung „${importedExam.lectureName}“ wurde dafür angelegt.`
+              : `Die Klausur wurde importiert und der Vorlesung „${importedExam.lectureName}“ zugeordnet.`}{" "}
+            <Link to={`/klausuren/${importedExam.id}`}>Zur importierten Klausur</Link>
+          </SuccessNotice>
+        ) : null}
+      </div>
 
       {loading ? (
         <p className="muted">Wird geladen …</p>

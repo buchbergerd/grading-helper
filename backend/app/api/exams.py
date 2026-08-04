@@ -13,15 +13,25 @@ existence of another instructor's exam data.
 
 from __future__ import annotations
 
+import json
+import unicodedata
 from decimal import Decimal
+from typing import Annotated
+from urllib.parse import quote
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, File, HTTPException, Query, Response, UploadFile, status
+from pydantic import ValidationError
 from sqlalchemy import Select, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.schemas import (
     ExamCreateRequest,
     ExamDetail,
+    ExamExportExercise,
+    ExamExportGradeThreshold,
+    ExamExportPayload,
+    ExamExportRegistration,
+    ExamImportResult,
     ExamSummary,
     ExamUpdateRequest,
     ExerciseInput,
@@ -56,6 +66,10 @@ OWNER_REQUIRED_DETAIL = "Die Prüfung muss einen Besitzer haben."
 SEMESTER_REQUIRED_DETAIL = "Das Semester darf nicht leer sein."
 TERMIN_REQUIRED_DETAIL = "Der Termin darf nicht leer sein."
 BONUS_POINTS_NEGATIVE_DETAIL = "Die Bonuspunkte dürfen nicht negativ sein."
+LECTURE_NAME_REQUIRED_DETAIL = "Der Name der Vorlesung darf nicht leer sein."
+IMPORT_INVALID_JSON_DETAIL = "Die Datei ist keine gültige JSON-Datei."
+IMPORT_FORMAT_VERSION_DETAIL = "Diese Datei stammt aus einer nicht unterstützten Programmversion."
+EXPORT_MEDIA_TYPE = "application/json"
 
 
 def _raise_validation_errors(errors: list[str]) -> None:
@@ -626,3 +640,324 @@ def delete_exam(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=EXAM_DELETE_CONFIRM_DETAIL)
     db.delete(exam)
     db.commit()
+
+
+# --------------------------------------------------------------------------------------------
+# Whole-exam export/import — backup / transfer between instructors or installations. Not part of
+# any §15 milestone; added afterwards by request. Deliberately lives here rather than in a
+# separate module: it needs exactly the validation/replace helpers and models this module already
+# owns, and splitting it out would either duplicate them or force those helpers to become a wider
+# public surface for one extra caller (see ``_validate_exercises``/``_replace_exercises`` etc.,
+# all still module-private).
+# --------------------------------------------------------------------------------------------
+
+_FILENAME_ASCII_TRANSLITERATION = {
+    "ä": "ae",
+    "ö": "oe",
+    "ü": "ue",
+    "Ä": "Ae",
+    "Ö": "Oe",
+    "Ü": "Ue",
+    "ß": "ss",
+}
+
+
+def _sanitize_filename_part(value: str) -> str:
+    """One filename component: no path separators, no whitespace, no empty result.
+
+    A small local duplicate of ``app/reports/attendance_list.py``'s helper of the same purpose,
+    kept separate on purpose: importing that module here would pull its module-level ``import
+    typst`` into exam CRUD's import graph — which every other API module in turn imports from —
+    just to reuse a header-string helper.
+    """
+    cleaned = "".join("-" if char in "/\\:" else char for char in value)
+    cleaned = "_".join(cleaned.split())
+    cleaned = cleaned.strip("._-")
+    return cleaned or "unbenannt"
+
+
+def _export_filename(exam: Exam) -> str:
+    """E.g. ``Export_WiSe_23-24_1._Termin.json``."""
+    parts = ["Export", _sanitize_filename_part(exam.semester), _sanitize_filename_part(exam.termin)]
+    return "_".join(parts) + ".json"
+
+
+def _export_content_disposition(filename: str) -> str:
+    """Same ASCII-fallback-plus-RFC-5987 ``Content-Disposition`` shape as every report download."""
+    stem = filename.removesuffix(".json")
+    expanded = "".join(_FILENAME_ASCII_TRANSLITERATION.get(char, char) for char in stem)
+    ascii_stem = "".join(
+        char
+        for char in unicodedata.normalize("NFKD", expanded)
+        if char.isascii() and char.isprintable()
+    )
+    ascii_name = _sanitize_filename_part(ascii_stem) + ".json"
+    quoted = quote(filename, safe="")
+    return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quoted}"
+
+
+@router.get(
+    "/exams/{exam_id}/export",
+    response_class=Response,
+    responses={
+        200: {
+            "content": {EXPORT_MEDIA_TYPE: {}},
+            "description": (
+                "Die Klausur (Eckdaten, Aufgaben, Notenschlüssel, Anmeldungen und Punkte) als "
+                "JSON-Datei."
+            ),
+        }
+    },
+)
+def export_exam(exam_id: int, user: CurrentUser, db: DbSession) -> Response:
+    """Export one exam as a single downloadable JSON file (backup, or transfer to another
+    instructor/installation via :func:`import_exam`).
+
+    Bundles everything a re-import needs: settings, exercises, the grading schema, and every
+    registration with its points — **including excluded registrations** (§5.3: excluded is an
+    audit flag, never a deletion, and dropping them here would make the round trip lossy).
+    ``owner_id`` is deliberately not part of the payload — see ``ExamExportPayload``'s docstring.
+
+    Each registration's ``points`` is keyed by the 1-based index of the exercise within this
+    file's own ``exercises`` list (see ``ExamExportRegistration``), not by ``Exercise.position``
+    or any database id — both would be meaningless, or actively misleading, once re-imported as
+    new rows.
+    """
+    exam = get_owned_exam(db, user, exam_id)
+    exercises = list(exam.exercises)  # relationship is ordered by position (app/models/exam.py)
+    index_by_exercise_id = {exercise.id: index for index, exercise in enumerate(exercises, start=1)}
+    by_grade = {threshold.grade: threshold.percentage for threshold in exam.grade_thresholds}
+
+    payload = ExamExportPayload(
+        lecture_name=exam.lecture.name,
+        semester=exam.semester,
+        termin=exam.termin,
+        exam_date=exam.exam_date,
+        bonus_mode=exam.bonus_mode,
+        bonus_points=exam.bonus_points,
+        exercises=[
+            ExamExportExercise(
+                name=exercise.name, max_points=exercise.max_points, position=exercise.position
+            )
+            for exercise in exercises
+        ],
+        grading_schema=[
+            ExamExportGradeThreshold(grade=grade, percentage=by_grade[grade])
+            for grade in GRADES
+            if grade in by_grade
+        ],
+        registrations=[
+            ExamExportRegistration(
+                matrikelnummer=registration.matrikelnummer,
+                nachname=registration.nachname,
+                vorname=registration.vorname,
+                course_code=registration.course_code,
+                module_title=registration.module_title,
+                versuch=registration.versuch,
+                kommentar=registration.kommentar,
+                flagged=registration.flagged,
+                excluded=registration.excluded,
+                attended=registration.attended,
+                source_filename=registration.source_filename,
+                points={
+                    str(index_by_exercise_id[points_row.exercise_id]): points_row.points
+                    for points_row in registration.exercise_points
+                },
+            )
+            for registration in exam.registrations
+        ],
+    )
+    body = payload.model_dump_json(indent=2).encode("utf-8")
+    return Response(
+        content=body,
+        media_type=EXPORT_MEDIA_TYPE,
+        headers={
+            "Content-Disposition": _export_content_disposition(_export_filename(exam)),
+            # Names and Matrikelnummern (§13 treats these as real personal data) — keep this out
+            # of shared/proxy caches and browser back-button caches, same as every other download
+            # of exam data (see app/reports/attendance_list.py::attendance_list_report).
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+def _format_import_structure_errors(exc: ValidationError) -> list[str]:
+    """Best-effort messages for a structurally invalid export file.
+
+    Mirrors the contract's own carve-out for standard FastAPI/Pydantic validation errors keeping
+    their default shape (docs/api-contract.md, Exams section) — applied here to a file upload
+    instead of a JSON request body: a corrupted or foreign file is reported with its field path
+    and pydantic's own message, rather than a hand-translated German sentence for every one of
+    the many ways a file could fail to match :class:`~app.api.schemas.ExamExportPayload`.
+    """
+    messages: list[str] = []
+    for error in exc.errors():
+        location = ".".join(str(part) for part in error["loc"])
+        messages.append(f"Exportdatei, Feld „{location}“: {error['msg']}")
+    return messages
+
+
+@router.post(
+    "/exams/import", response_model=ExamImportResult, status_code=status.HTTP_201_CREATED
+)
+def import_exam(
+    user: CurrentUser, db: DbSession, file: Annotated[UploadFile, File()]
+) -> ExamImportResult:
+    """Import a whole exam from a file produced by :func:`export_exam`.
+
+    Always creates a **new** exam — a restore/transfer, never a merge into an existing one.
+    ``lecture_name`` is resolved against the caller's **own** lectures only, by an exact,
+    case-sensitive name match; if none matches, a new ``Lecture`` is created for it. Scoping the
+    lookup to the caller's own lectures matters for two reasons: it must never attach the
+    imported exam to another instructor's lecture, and it must not even reveal whether a
+    same-named lecture belonging to someone else exists (the usual 404-not-403 posture — see
+    this module's docstring).
+
+    The new exam's owner is always the **importer**, never a value read from the file — see
+    ``ExamExportPayload``'s docstring for why honoring a file-provided owner would be a
+    privilege hole.
+
+    Everything is validated — file readability, JSON structure, exercises/grading-schema business
+    rules (the same ones ``create_exam`` enforces), within-file duplicate Matrikelnummer, and
+    every points entry naming a real exercise of this file with a non-negative value — before
+    anything is written to the database, the same all-or-nothing posture as the registration-PDF
+    import (§5.3).
+    """
+    try:
+        raw = json.loads(file.file.read())
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        _raise_validation_errors([IMPORT_INVALID_JSON_DETAIL])
+        raise AssertionError("unreachable") from None  # pragma: no cover
+
+    try:
+        payload = ExamExportPayload.model_validate(raw)
+    except ValidationError as exc:
+        _raise_validation_errors(_format_import_structure_errors(exc))
+        raise AssertionError("unreachable") from None  # pragma: no cover
+
+    errors: list[str] = []
+    if payload.format_version != 1:
+        errors.append(IMPORT_FORMAT_VERSION_DETAIL)
+    if not payload.lecture_name.strip():
+        errors.append(LECTURE_NAME_REQUIRED_DETAIL)
+    if not payload.semester.strip():
+        errors.append(SEMESTER_REQUIRED_DETAIL)
+    if not payload.termin.strip():
+        errors.append(TERMIN_REQUIRED_DETAIL)
+    if payload.bonus_points < 0:
+        errors.append(BONUS_POINTS_NEGATIVE_DETAIL)
+
+    exercises = [
+        ExerciseInput(name=item.name, max_points=item.max_points) for item in payload.exercises
+    ]
+    errors.extend(_validate_exercises(exercises))
+
+    schema_input = [
+        GradeThresholdInput(grade=item.grade, percentage=item.percentage)
+        for item in payload.grading_schema
+    ]
+    percentages, schema_errors = _validate_grading_schema_input(schema_input)
+    errors.extend(schema_errors)
+
+    # §5.3's "never silently merged or duplicated" rule, applied within this one file — there is
+    # no existing-registrations DB check to make here, since import always creates a brand-new
+    # exam that starts with none.
+    seen_counts: dict[str, int] = {}
+    for registration in payload.registrations:
+        key = registration.matrikelnummer.strip()
+        seen_counts[key] = seen_counts.get(key, 0) + 1
+    duplicates = sorted(
+        matrikelnummer for matrikelnummer, count in seen_counts.items() if count > 1
+    )
+    if duplicates:
+        errors.append(
+            "Doppelte Matrikelnummer(n) in der Exportdatei: " + ", ".join(duplicates) + "."
+        )
+
+    exercise_count = len(payload.exercises)
+    for registration in payload.registrations:
+        for key, value in registration.points.items():
+            try:
+                index = int(key)
+            except ValueError:
+                errors.append(
+                    f"{registration.matrikelnummer}: Ungültiger Aufgaben-Index „{key}“ in den "
+                    "Punkten."
+                )
+                continue
+            if not 1 <= index <= exercise_count:
+                errors.append(
+                    f"{registration.matrikelnummer}: Aufgabe Nr. {index} in den Punkten kommt in "
+                    "dieser Datei nicht vor."
+                )
+                continue
+            if value < 0:
+                errors.append(
+                    f"{registration.matrikelnummer}: Punkte für Aufgabe Nr. {index} dürfen nicht "
+                    "negativ sein."
+                )
+
+    # Everything above is validated before anything below is mutated, so a rejected import leaves
+    # the database exactly as it was (same posture as create_exam/update_exam).
+    _raise_validation_errors(errors)
+
+    lecture_name = payload.lecture_name.strip()
+    lecture = (
+        db.execute(select(Lecture).where(Lecture.owner_id == user.id, Lecture.name == lecture_name))
+        .scalars()
+        .first()
+    )
+    lecture_created = lecture is None
+    if lecture is None:
+        lecture = Lecture(name=lecture_name, owner_id=user.id)
+        db.add(lecture)
+        db.flush()
+
+    exam = Exam(
+        lecture_id=lecture.id,
+        owner_id=user.id,
+        semester=payload.semester.strip(),
+        termin=payload.termin.strip(),
+        exam_date=payload.exam_date,
+        bonus_mode=payload.bonus_mode,
+        bonus_points=payload.bonus_points,
+    )
+    db.add(exam)
+    db.flush()
+    _replace_exercises(db, exam, exercises)
+    _replace_grading_schema(db, exam, percentages)
+    db.flush()
+
+    # `_replace_exercises` appends every (new, since none of `exercises` carries an `id`) exercise
+    # in submitted order, i.e. `payload.exercises`'s own order — exactly the 1-based index
+    # `points` keys reference, already bounds-checked against `exercise_count` above.
+    exercise_by_index = dict(enumerate(exam.exercises, start=1))
+
+    for registration in payload.registrations:
+        row = StudentRegistration(
+            exam_id=exam.id,
+            matrikelnummer=registration.matrikelnummer.strip(),
+            nachname=registration.nachname.strip(),
+            vorname=registration.vorname.strip(),
+            course_code=registration.course_code.strip(),
+            module_title=registration.module_title.strip(),
+            versuch=registration.versuch,
+            kommentar=registration.kommentar,
+            flagged=registration.flagged,
+            excluded=registration.excluded,
+            attended=registration.attended,
+            source_filename=registration.source_filename,
+        )
+        db.add(row)
+        db.flush()
+        for key, value in registration.points.items():
+            exercise = exercise_by_index[int(key)]
+            db.add(ExercisePoints(registration_id=row.id, exercise_id=exercise.id, points=value))
+
+    db.commit()
+    db.refresh(exam)
+    return ExamImportResult(
+        exam=exam_detail(db, exam),
+        lecture_created=lecture_created,
+        registrations_imported=len(payload.registrations),
+    )
