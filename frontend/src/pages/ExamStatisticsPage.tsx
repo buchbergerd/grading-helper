@@ -603,6 +603,7 @@ export default function ExamStatisticsPage(): JSX.Element {
       <HistogramSection
         title={`Histogramm der Gesamtpunkte${simulationTitleSuffix}`}
         maxObserved={activeTotalPointsHistogram.max_observed}
+        referenceMax={activeTotalPointsHistogram.reference_max}
         includedCount={activeTotalPointsHistogram.included_count}
         bars={activeTotalPointsBars}
         thresholdBinLabel={activeThresholdBinLabel}
@@ -619,6 +620,7 @@ export default function ExamStatisticsPage(): JSX.Element {
               key={histogram.title}
               title={histogram.title}
               maxObserved={source?.max_observed ?? null}
+              referenceMax={source?.reference_max ?? "0"}
               includedCount={source?.included_count ?? 0}
               bars={histogram.bars}
               testIdPrefix={`exercise-histogram-${index}`}
@@ -690,6 +692,7 @@ function KpiCard({
 function HistogramSection({
   title,
   maxObserved,
+  referenceMax,
   includedCount,
   bars,
   thresholdBinLabel = null,
@@ -698,6 +701,9 @@ function HistogramSection({
 }: {
   title: string;
   maxObserved: string | null;
+  /** The exam's total max points, or the exercise's `max_points` — shown alongside
+   * `maxObserved` as "<value> / <referenceMax>". */
+  referenceMax: string;
   includedCount: number;
   bars: HistogramBarDatum[];
   /** Only set for the total-points histogram — see `series.ts::thresholdBinLabel`. */
@@ -714,7 +720,8 @@ function HistogramSection({
         {includedCount === 1
           ? "1 Studierende bzw. Studierender berücksichtigt"
           : `${includedCount} Studierende berücksichtigt`}
-        {" — "}höchster beobachteter Wert: {formatDecimalOrDash(maxObserved)}
+        {" — "}höchster beobachteter Wert: {formatDecimalOrDash(maxObserved)} /{" "}
+        {formatDecimal(referenceMax)}
         {passingThreshold !== null && (
           <>
             {" — "}Bestehensgrenze: {formatDecimalOrDash(passingThreshold)} Punkte
